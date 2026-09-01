@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<!-- Interface do Baixador de Footage. HTML/CSS/JS puro, sem build. Ticket T7. -->
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Baixador de Footage</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Aviso de ffmpeg ausente. Escondido por padrão; GET /api/config decide. -->
+  <div id="aviso-ffmpeg" class="aviso" hidden></div>
+
+  <header>
+    <h1>Baixador de Footage</h1>
+  </header>
+
+  <main>
+    <!-- 1. Colar links -->
+    <section id="entrada"><!-- T7 --></section>
+
+    <!-- 2. Cartões de preview -->
+    <section id="previews"><!-- T7 --></section>
+
+    <!-- 3. Fila, atualizada por polling de 1s -->
+    <section id="fila"><!-- T7 --></section>
+
+    <!-- 4. Histórico com busca -->
+    <section id="historico"><!-- T7 --></section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

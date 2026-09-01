@@ -1,0 +1,19 @@
+# Mapeamento de projeto/cliente para pasta de destino.
+#
+# RECOMENDAÇÃO FORTE: apontar `pasta` para FORA do repositório.
+# O .gitignore cobre as variações comuns, mas um .mp4 que entra no histórico
+# do Git não sai mais sem reescrever o histórico.
+#
+# A carga valida que a pasta existe (ou é criável) e é gravável. Projeto
+# inválido aparece desabilitado na interface, com o motivo.
+
+projetos:
+
+  pessoal:
+    nome: "Canal pessoal"
+    pasta: "D:/FOOTAGE/pessoal"
+
+  # Exemplo. Ajustar para os clientes reais.
+  cliente_exemplo:
+    nome: "Cliente Exemplo"
+    pasta: "D:/FOOTAGE/cliente_exemplo"

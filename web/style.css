@@ -1,0 +1,29 @@
+/* Baixador de Footage. Ticket T7.
+   As variáveis abaixo existem para serem mexidas sem caçar valor no arquivo. */
+
+:root {
+  /* Cores */
+  --cor-fundo:        #14161a;
+  --cor-superficie:   #1d2026;
+  --cor-borda:        #2c313a;
+  --cor-texto:        #e6e8ec;
+  --cor-texto-fraco:  #9aa2b1;
+  --cor-destaque:     #4c8dff;
+  --cor-sucesso:      #3fb950;
+  --cor-erro:         #f85149;
+  --cor-aviso:        #d29922;
+
+  /* Espaçamento */
+  --gap-xs: 4px;
+  --gap-sm: 8px;
+  --gap-md: 16px;
+  --gap-lg: 24px;
+
+  /* Tipografia */
+  --fonte: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --fonte-mono: "Cascadia Code", Consolas, monospace;
+
+  --raio: 6px;
+}
+
+/* T7 */

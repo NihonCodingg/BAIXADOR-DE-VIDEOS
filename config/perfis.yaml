@@ -1,0 +1,56 @@
+# Perfis de qualidade voltados para edição.
+# Justificativa técnica de cada seletor: RESEARCH.md, seção 2.2.
+#
+# format      = filtro ELIMINATÓRIO (o que é inegociável)
+# format_sort = ordem de PREFERÊNCIA (nunca elimina, só decide o melhor)
+#
+# Sempre terminar a cadeia de `/` com um fallback simples, senão vídeos com
+# formatos incomuns falham com "Requested format is not available".
+#
+# PROIBIDO usar `,` no format: gera vários arquivos e quebra a premissa de
+# um arquivo por job. A carga rejeita.
+
+perfis:
+
+  edicao_1080:
+    descricao: "1080p H.264 + AAC — abre nativo no Premiere/Resolve"
+    format: "bv*[height<=1080][vcodec^=avc1]+ba[acodec^=mp4a]/bv*[height<=1080]+ba/b[height<=1080]/b"
+    format_sort: ["res:1080", "vcodec:h264", "acodec:aac", "fps"]
+    merge_output_format: "mp4"
+    postprocessors: []
+    exige_ffmpeg: true
+
+  edicao_4k:
+    descricao: "Até 2160p — VP9/AV1, pode exigir transcode para a timeline"
+    # NÃO filtra por avc1: o YouTube não serve H.264 acima de 1080p.
+    # Um filtro de codec aqui faria o perfil cair em silêncio para 1080p.
+    format: "bv*[height<=2160]+ba/b[height<=2160]/b"
+    format_sort: ["res:2160", "fps", "vcodec:vp9", "acodec:aac"]
+    # mkv aceita qualquer combinação de codecs sem atrito.
+    merge_output_format: "mkv"
+    postprocessors: []
+    exige_ffmpeg: true
+
+  so_audio:
+    descricao: "Só a trilha de áudio, em m4a"
+    format: "ba/b"
+    format_sort: ["acodec:aac", "abr"]
+    merge_output_format: "m4a"
+    # m4a e não mp3: o YouTube já entrega AAC ou Opus. Converter para MP3 é
+    # uma segunda geração de perda sem ganho. Com m4a e fonte AAC, o ffmpeg
+    # faz copy do stream, sem reencodar.
+    postprocessors:
+      - key: "FFmpegExtractAudio"
+        preferredcodec: "m4a"
+        preferredquality: "0"
+    exige_ffmpeg: true
+
+  preview_leve:
+    descricao: "Até 480p, menor arquivo — para bater o olho antes de baixar"
+    format: "bv*[height<=480]+ba/b[height<=480]/b"
+    # O `+` inverte a ordenação: prefere o MENOR arquivo.
+    # Melhor que `worst`, que escolhe o pior em todos os aspectos.
+    format_sort: ["res:480", "+size"]
+    merge_output_format: "mp4"
+    postprocessors: []
+    exige_ffmpeg: true
