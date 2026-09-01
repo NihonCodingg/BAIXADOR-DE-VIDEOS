@@ -1,0 +1,259 @@
+"""Testes de campo_limite e da resolução do template {dim}.
+
+Parte do T2, adiantada porque a decisão do teto na menor dimensão (SPEC 6.3)
+precisou ser resolvida antes de escrever o resto do ticket.
+
+Nenhum teste toca a rede. O teste de regressão usa o motor de seleção real do
+yt-dlp, que é computação pura sobre a lista de formatos.
+"""
+
+import copy
+
+import pytest
+import yaml
+
+from src.domain.models import Formato
+from src.domain.perfis import (
+    Perfil,
+    campo_limite,
+    resolver_dim,
+    resolver_format,
+)
+
+
+def fmt(largura=None, altura=None, format_id="x", ext="mp4",
+        vcodec="avc1.64", acodec="mp4a.40.2"):
+    """Formato mínimo para os testes de orientação."""
+    return Formato(
+        format_id=format_id, ext=ext,
+        resolucao=f"{largura}x{altura}" if largura else None,
+        largura=largura, altura=altura,
+        fps=None, vcodec=vcodec, acodec=acodec,
+        tbr=None, tamanho_bytes=None,
+    )
+
+
+# ===========================================================================
+# campo_limite — a decisão de orientação
+# ===========================================================================
+
+def test_vertical_usa_width():
+    """Short 1080x1920: a menor dimensão é a largura."""
+    assert campo_limite([fmt(1080, 1920), fmt(608, 1080)]) == "width"
+
+
+def test_horizontal_usa_height():
+    """Vídeo comum 1920x1080: a menor dimensão é a altura."""
+    assert campo_limite([fmt(1920, 1080), fmt(1280, 720)]) == "height"
+
+
+def test_quadrado_usa_height():
+    """Decisão documentada em SPEC 6.3.
+
+    Num vídeo quadrado os dois filtros selecionam o mesmo conjunto, então a
+    escolha é convenção, não correção: "height" porque é assim que se descreve
+    qualidade de vídeo ("1080p" = 1080 linhas).
+
+    A regra é ESTRITA: usa "width" apenas quando altura > largura.
+    """
+    assert campo_limite([fmt(1080, 1080)]) == "height"
+
+
+def test_lista_so_de_audio_devolve_none():
+    """Sem nenhuma dimensão, o filtro é omitido do seletor."""
+    sem_dim = [fmt(None, None, format_id="140", vcodec="none"),
+               fmt(None, None, format_id="251", vcodec="none")]
+    assert campo_limite(sem_dim) is None
+
+
+def test_lista_vazia_devolve_none():
+    assert campo_limite([]) is None
+
+
+def test_formatos_sem_dimensao_sao_ignorados():
+    """Mistos: os só-áudio não podem influenciar a decisão de orientação."""
+    mistos = [fmt(None, None, format_id="140", vcodec="none"),
+              fmt(1080, 1920, format_id="137"),
+              fmt(None, None, format_id="251", vcodec="none")]
+    assert campo_limite(mistos) == "width"
+
+
+def test_decide_pelo_maior_formato_nao_pelo_primeiro():
+    """A orientação vem do formato de maior área.
+
+    Guard contra implementação que olhasse só o primeiro item da lista — a
+    ordem dos formatos no info_dict não é garantida.
+    """
+    assert campo_limite([fmt(320, 180), fmt(1080, 1920)]) == "width"
+    assert campo_limite([fmt(180, 320), fmt(1920, 1080)]) == "height"
+
+
+def test_dimensao_zero_e_tratada_como_ausente():
+    """width=0 é dado corrompido, não um vídeo de largura zero."""
+    assert campo_limite([fmt(0, 1080), fmt(1920, 1080)]) == "height"
+
+
+# ===========================================================================
+# resolver_dim / resolver_format — a substituição do template
+# ===========================================================================
+
+def perfil(format_, limite):
+    return Perfil(nome="t", descricao="", format=format_,
+                  limite_dimensao=limite, format_sort=(),
+                  merge_output_format="mp4", postprocessors=(),
+                  exige_ffmpeg=True)
+
+
+def test_dim_vertical():
+    p = perfil("bv*{dim}+ba/b", 1080)
+    assert resolver_dim(p, [fmt(1080, 1920)]) == "[width<=1080]"
+
+
+def test_dim_horizontal():
+    p = perfil("bv*{dim}+ba/b", 1080)
+    assert resolver_dim(p, [fmt(1920, 1080)]) == "[height<=1080]"
+
+
+def test_dim_vazio_quando_perfil_nao_usa_dimensao():
+    """so_audio tem limite_dimensao: null."""
+    p = perfil("ba/b", None)
+    assert resolver_dim(p, [fmt(1920, 1080)]) == ""
+
+
+def test_dim_vazio_quando_nao_ha_formatos_com_dimensao():
+    """O filtro é OMITIDO, não preenchido com um padrão."""
+    p = perfil("bv*{dim}+ba/b", 1080)
+    assert resolver_dim(p, [fmt(None, None, vcodec="none")]) == ""
+
+
+def test_format_substitui_todas_as_ocorrencias():
+    """O template do edicao_1080 tem {dim} três vezes."""
+    p = perfil("bv*{dim}[vcodec^=avc1]+ba/bv*{dim}+ba/b{dim}/b", 1080)
+    resultado = resolver_format(p, [fmt(1920, 1080)])
+    assert "{dim}" not in resultado
+    assert resultado.count("[height<=1080]") == 3
+
+
+def test_format_sem_dimensao_fica_sintaticamente_valido():
+    """Omitir o filtro não pode deixar colchete solto nem barra dupla."""
+    p = perfil("bv*{dim}+ba/b{dim}/b", 1080)
+    resultado = resolver_format(p, [fmt(None, None, vcodec="none")])
+    assert resultado == "bv*+ba/b/b"
+    assert "[" not in resultado and "]" not in resultado
+
+
+# ===========================================================================
+# REGRESSÃO — trava o resultado medido com o motor real do yt-dlp
+# ===========================================================================
+
+def _para_formato(bruto: dict) -> Formato:
+    return Formato(
+        format_id=bruto.get("format_id"), ext=bruto.get("ext"),
+        resolucao=bruto.get("resolution"),
+        largura=bruto.get("width"), altura=bruto.get("height"),
+        fps=bruto.get("fps"), vcodec=bruto.get("vcodec"),
+        acodec=bruto.get("acodec"), tbr=bruto.get("tbr"),
+        tamanho_bytes=bruto.get("filesize") or bruto.get("filesize_approx"),
+    )
+
+
+def _selecionar(formatos_brutos, seletor, format_sort):
+    """Roda o motor de seleção REAL do yt-dlp, offline.
+
+    build_format_selector e a função que ele devolve são computação pura sobre
+    a lista de formatos — não tocam a rede.
+    """
+    import yt_dlp
+
+    ydl = yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True,
+                            "format": seletor, "format_sort": list(format_sort)})
+    fs = copy.deepcopy(formatos_brutos)
+    ydl.sort_formats({"formats": fs, "_format_sort_fields": None})
+
+    ctx = {
+        "formats": fs,
+        "has_merged_format": any(
+            "none" not in (f.get("acodec"), f.get("vcodec")) for f in fs),
+        "incomplete_formats": (
+            all(f.get("vcodec") == "none" for f in fs)
+            or all(f.get("acodec") == "none" for f in fs)),
+    }
+    return list(ydl.build_format_selector(seletor)(ctx))
+
+
+@pytest.fixture
+def perfil_real():
+    """edicao_1080 lido do config/perfis.yaml de verdade.
+
+    Ler o arquivo real é o ponto: se alguém editar o seletor, este teste
+    quebra.
+    """
+    from pathlib import Path
+    raiz = Path(__file__).resolve().parent.parent
+    dados = yaml.safe_load(
+        (raiz / "config" / "perfis.yaml").read_text(encoding="utf-8"))
+    p = dados["perfis"]["edicao_1080"]
+    return perfil(p["format"], p["limite_dimensao"]), tuple(p["format_sort"])
+
+
+def test_regressao_short_vertical_seleciona_1080x1920(info_dict_real, perfil_real):
+    """TRAVA O NÚMERO MEDIDO.
+
+    Com o spike_meta.json real e o perfil edicao_1080, a seleção final tem que
+    ser 137+140 em 1080x1920.
+
+    Antes da correção de SPEC 6.3, o filtro fixo [height<=1080] entregava
+    480x854 neste mesmo vídeo — o filtro de altura pressupunha vídeo
+    horizontal, e o filtro de codec agravava. Esse número foi caro de
+    descobrir; se alguém mexer no seletor e a qualidade despencar de novo,
+    este teste quebra em vez de o problema aparecer no meio de uma edição.
+    """
+    p, sort = perfil_real
+    brutos = [f for f in info_dict_real["formats"] if f.get("ext") != "mhtml"]
+
+    assert campo_limite([_para_formato(f) for f in brutos]) == "width", \
+        "o vídeo do fixture é um Short vertical"
+
+    seletor = resolver_format(p, [_para_formato(f) for f in brutos])
+    assert "[width<=1080]" in seletor
+
+    escolhidos = _selecionar(brutos, seletor, sort)
+
+    # O operador `+` devolve UM formato mesclado, com os componentes em
+    # `requested_formats` — não dois itens na lista.
+    assert len(escolhidos) == 1, f"esperado 1 formato mesclado, veio {len(escolhidos)}"
+    merged = escolhidos[0]
+
+    assert merged["format_id"] == "137+140", \
+        f"esperado 137+140, veio {merged['format_id']}"
+    assert (merged["width"], merged["height"]) == (1080, 1920), \
+        f"esperado 1080x1920, veio {merged['width']}x{merged['height']}"
+    assert merged["vcodec"].startswith("avc1"), \
+        f"edicao_1080 deve preferir H.264, veio {merged['vcodec']}"
+    assert merged["acodec"].startswith("mp4a"), \
+        f"edicao_1080 deve preferir AAC, veio {merged['acodec']}"
+
+    componentes = [f["format_id"] for f in merged["requested_formats"]]
+    assert componentes == ["137", "140"], \
+        f"componentes do merge inesperados: {componentes}"
+
+
+def test_regressao_o_filtro_antigo_de_altura_degradava(info_dict_real):
+    """Documenta o bug corrigido, com o motor real.
+
+    Não é teste do nosso código — é a prova de que a correção era necessária.
+    Se este teste um dia passar a devolver 1080x1920, o yt-dlp mudou de
+    comportamento e vale reavaliar a solução.
+    """
+    brutos = [f for f in info_dict_real["formats"] if f.get("ext") != "mhtml"]
+    antigo = ("bv*[height<=1080][vcodec^=avc1]+ba[acodec^=mp4a]"
+              "/bv*[height<=1080]+ba/b[height<=1080]/b")
+
+    escolhidos = _selecionar(brutos, antigo,
+                             ["res:1080", "vcodec:h264", "acodec:aac", "fps"])
+    video = next(f for f in escolhidos if f.get("width"))
+
+    assert (video["width"], video["height"]) == (480, 854), (
+        "o filtro fixo de altura entregava 480x854 neste Short; "
+        f"veio {video['width']}x{video['height']}"
+    )
