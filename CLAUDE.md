@@ -2,8 +2,126 @@
 
 Instruções permanentes para qualquer sessão de trabalho neste repositório.
 
-> Este arquivo cresce ao longo do projeto. A Fase 4 acrescenta as convenções de
-> arquitetura, testes e fluxo de trabalho por ticket. Por ora, só versionamento.
+Documentos de referência: [SPEC.md](SPEC.md) é normativo, [RESEARCH.md](RESEARCH.md)
+é a base factual, [PLAN.md](PLAN.md) tem os tickets.
+
+---
+
+## Contexto
+
+Ferramenta local de download de footage para edição de vídeo. Usuário único, na
+própria máquina.
+
+O autor é desenvolvedor iniciante (2º semestre de ADS) e editor de vídeo
+profissional. Ele quer **aprender** a parte Python: arquitetura, testes e
+concorrência. Explique o "porquê" das decisões, em português. Prefira a solução
+mais simples que resolve — não venda arquitetura que o projeto não precisa.
+
+Decisões sobre qualidade de vídeo e codec são território dele. Decisões de
+Python são onde ele quer aprender.
+
+---
+
+## Fluxo de trabalho
+
+### Um ticket por sessão
+
+- **Um ticket por sessão**, com `/clear` entre elas.
+- Ao final de cada ticket: rodar a suíte inteira e mostrar o resultado.
+- Commit + push ao concluir, com a suíte passando.
+
+### T2, T3 e T5 exigem TDD com confirmação
+
+Nestes três tickets:
+
+1. Escrever os testes **antes** da implementação
+2. **Mostrar a lista de casos de borda ao autor**
+3. **Esperar a confirmação dele** antes de implementar
+
+Não é sugestão. É o ponto do projeto: são os tickets onde mora a lógica de
+domínio, e é onde ele quer aprender.
+
+### Testes
+
+- **NENHUM teste pode tocar a rede.** Sem exceção.
+- Metadados vêm de `spike_meta.json`, capturado uma vez pelo `spike.py`.
+- A fila é testada com `DownloaderFalso` (`tests/conftest.py`).
+- Rodar tudo: `python -m pytest tests/ -v`
+
+---
+
+## Arquitetura
+
+### As duas regras duras
+
+**REGRA 1** — `src/domain/` nunca importa de `src/download/`, `src/storage/` ou
+`src/queue/`.
+
+**REGRA 2** — `src/web/` nunca importa de `src/domain/`. Ele fala com
+`src/pipeline.py`.
+
+Garantidas por `tests/test_arquitetura.py`, que analisa a árvore com `ast` e
+quebra o build. Não é comentário decorativo — foi verificado que ele falha
+quando violado.
+
+### O domínio é puro
+
+Sem rede, sem disco, sem `yt_dlp`. Quando precisar de I/O, **injete a
+dependência** em vez de importar. Modelo:
+`resolver_colisao(caminho, existe)` recebe a checagem de existência como
+callable.
+
+### Só `src/download/` conhece o yt-dlp
+
+`import yt_dlp` fora de `src/download/` quebra o build.
+
+### Onde colocar coisa nova
+
+Antes de criar um módulo, o critério do SPEC 5: *o yt-dlp já resolve isso?* Se
+sim, não é domínio. Se resolve parcialmente, o que falta é domínio. O risco
+central do projeto é o domínio virar wrapper vazio.
+
+---
+
+## Convenções de código
+
+- Nomes de identificador e comentários em **português**, seguindo o que já
+  existe. Não misturar idiomas dentro de um módulo.
+- Docstring de módulo diz **o quê** e cita a seção do SPEC ou do RESEARCH que
+  justifica.
+- Todo stub referencia o ticket: `raise NotImplementedError("T3")`.
+- Type hints em assinaturas públicas.
+- Sem dependência nova sem justificativa em `requirements.txt`. Se não dá para
+  justificar em uma linha, não entra.
+
+### Duas armadilhas do Windows já conhecidas
+
+Ambas medidas e documentadas em RESEARCH §7:
+
+1. **Console é cp1252.** Todo entry point que imprime título de vídeo precisa de
+   `sys.stdout.reconfigure(encoding="utf-8")`. Sem isso: `UnicodeEncodeError`.
+2. **`NUL` engole dados em silêncio.** Gravar em arquivo com nome reservado do
+   DOS não levanta erro e os bytes somem. Sanitização é correção, não estilo.
+
+### O progress hook
+
+- Pode ser chamado de **outra thread** (RESEARCH §3.4). Sempre tratar como tal.
+- Dispara muitas vezes por segundo: **nenhuma I/O** dentro dele. Sem SQLite, sem
+  `print`.
+- Toda chave do dicionário é opcional: `d.get('speed')`, nunca `d['speed']`. Um
+  `KeyError` ali derruba o download inteiro.
+
+---
+
+## Escopo
+
+Está em [SPEC.md §2.2](SPEC.md). Fora de escopo **em definitivo**: contorno de
+DRM ou paywall, download em massa de canais, upload ou redistribuição,
+multiusuário/autenticação/deploy.
+
+Pedido nesse sentido em sessão futura: recusar e citar o SPEC.
+
+---
 
 ## Versionamento
 
