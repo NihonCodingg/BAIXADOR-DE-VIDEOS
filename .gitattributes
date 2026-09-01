@@ -1,0 +1,9 @@
+# Normaliza fim de linha: LF no repositório, nativo na cópia de trabalho.
+# Sem isto, o Git avisa "LF will be replaced by CRLF" em cada arquivo, a
+# cada commit, no Windows.
+* text=auto eol=lf
+
+# Binários, se algum dia entrar algum na documentação.
+*.png binary
+*.jpg binary
+*.ico binary
