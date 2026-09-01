@@ -8,10 +8,28 @@ serviço, não tem autenticação e não deve ser exposta na rede.
 
 ## Estado atual
 
-**Pré-implementação.** O projeto está na Fase 2 de um fluxo de 7 fases. O que
-existe hoje é a pesquisa técnica ([RESEARCH.md](RESEARCH.md)); o código ainda
-não foi escrito. As instruções de execução abaixo descrevem o alvo, não o que
-funciona agora.
+**Planejado e estruturado, ainda não implementado.**
+
+O que existe hoje:
+
+| Item | Estado |
+|---|---|
+| [RESEARCH.md](RESEARCH.md) — pesquisa técnica | pronto |
+| [SPEC.md](SPEC.md) — especificação normativa | pronto |
+| [PLAN.md](PLAN.md) — tickets T1 a T8 | pronto |
+| `spike.py` — protótipo descartável | pronto, não executado ainda |
+| Estrutura de pastas e stubs | pronta |
+| Teste de arquitetura | passando (23 testes) |
+| Lógica de negócio (T1 a T8) | **não implementada** |
+
+Os stubs levantam `NotImplementedError` com o ticket que os implementa. **As
+instruções de execução abaixo descrevem o alvo, não o que funciona hoje.**
+
+Rodar os testes:
+
+```bash
+python -m pytest tests/ -v
+```
 
 ## O problema
 
