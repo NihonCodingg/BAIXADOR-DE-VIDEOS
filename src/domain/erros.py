@@ -61,3 +61,8 @@ class ProjetoInvalido(ErroDeDominio):
 
 class TransicaoIlegal(ErroDeDominio):
     pass
+
+
+class NomeImpossivel(ErroDeDominio):
+    """A pasta do projeto é tão profunda que não sobra espaço nem para o custo
+    fixo do nome (data + id + extensão). SPEC 8.3."""

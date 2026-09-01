@@ -125,11 +125,28 @@ Pedido nesse sentido em sessão futura: recusar e citar o SPEC.
 
 ## Versionamento
 
-- Commit + push ao concluir cada ticket, com a suíte de testes passando. Nunca
-  commitar com teste falhando.
+### A regra geral
+
+- Commit + push ao concluir cada ticket, com a suíte de testes passando.
 - Se um ticket tiver partes distintas (implementação, testes, documentação),
   fazer commits separados. Commits menores e mais frequentes são preferíveis a
   um commit grande no fim.
+
+### Em ciclo TDD (T2, T3, T5)
+
+O que a regra "nunca commitar com teste falhando" protege é o **remoto**, não o
+commit local. Um commit local vermelho é o registro do ciclo TDD, e vê-lo é
+parte do objetivo de aprendizado deste projeto.
+
+1. **Commit dos testes** — vermelho, com a mensagem deixando claro que os
+   testes ainda não passam.
+2. **Commit da implementação** — verde.
+3. **`git push` SOMENTE depois do verde**, com a suíte inteira passando.
+
+**O remoto nunca fica quebrado.** Se a implementação não terminar na sessão, o
+commit vermelho fica local e não sobe.
+
+Fora de ciclo TDD, vale a regra geral acima: commit + push ao concluir.
 - Formato da mensagem: prefixo do ticket, dois pontos, descrição objetiva em
   português.
 

@@ -345,35 +345,134 @@ Racional de cada parte:
 
 ### 8.2 Regras de sanitização
 
-Ordem de aplicação (a ordem importa: truncar antes de tratar ponto final
-reintroduziria o problema):
+Ordem de aplicação. **A ordem importa**: truncar antes de tratar ponto final
+reintroduziria o problema.
 
 1. Remover caracteres de controle (0–31, 127)
-2. Substituir os proibidos `< > : " / \ | ? *` por `-`
-   — **não** por homóglifos de largura total
-3. Colapsar espaços e hifens repetidos
-4. Remover ponto e espaço do início e do fim
-5. Se o nome (sem extensão) casar com nome reservado do DOS,
-   case-insensitive, com ou sem extensão → sufixar `_`
-6. Truncar respeitando o orçamento de caminho (§8.3), preservando extensão
-7. Se sobrar vazio → usar `video_{id}`
+
+2. Substituir os proibidos por **mapeamento individual**, e não por uma regra
+   única. Cada caractere carrega um significado diferente no título, e achatar
+   todos em `-` destrói informação:
+
+   | Caractere | Vira | Motivo |
+   |---|---|---|
+   | `\|` | `" - "` | separador visual; comum em título de gaming |
+   | `/` | `"-"` | colado: é intervalo. `2024/2025` → `2024-2025` |
+   | `\` | `"-"` | idem |
+   | `:` | `" "` | vira espaço; `Round1:Final` → `Round1 Final`, sem colar palavras |
+   | `?` `*` `"` `<` `>` | `""` | removidos; não carregam significado |
+
+   **Nunca** substituir por homóglifos Unicode de largura total. É o que o
+   yt-dlp faz, e torna o nome não-digitável e não-buscável (RESEARCH §7.4).
+
+3. Colapsar espaços repetidos
+
+4. Remover ponto e espaço **do fim**. Ponto no início é legal no Windows e é
+   preservado.
+
+5. Se o nome-base (sem extensão) for **igual** a um nome reservado do DOS,
+   case-insensitive → sufixar `_`. Comparação por **igualdade**, nunca por
+   prefixo: `CONSOLE`, `CONTRA` e `NULO` não podem ser mutilados.
+
+6. Truncar respeitando o orçamento de caminho (§8.3), preservando a extensão e
+   o `[video_id]`.
+
+7. **Fallback para o título `video`** quando o título sanitizado não contém
+   nenhum caractere alfanumérico (categoria Unicode `L*` ou `N*`).
+
+   Esta regra única cobre quatro casos de uma vez: título vazio, só espaços, só
+   pontuação e **só emoji**. O critério é utilidade prática: um nome sem
+   nenhuma letra ou dígito é impossível de digitar numa busca, e o trabalho
+   acontece em pastas com centenas de arquivos.
+
+   Título com texto **e** emoji mantém os emoji — `Rush B 🎮` continua
+   `Rush B 🎮`. Só o caso degenerado cai no fallback.
+
+   O fallback é `video` e **não** `video_{id}`: o `[{id}]` do template já
+   garante unicidade, e repetir o id no meio do nome vira ruído.
+   Resultado: `20260901 - video [LzS8kB6lIm0].mp4`.
+
+8. **Normalizar a saída para NFC.**
+
+   `ç` pode chegar como um caractere (NFC) ou como `c` + cedilha combinante
+   (NFD). São strings diferentes que parecem idênticas. Sem normalizar, a mesma
+   origem variando geraria dois nomes de arquivo e dois registros no histórico
+   para o mesmo vídeo — um bug caro de diagnosticar.
+
+   O conteúdo do projeto é em português e cheio de acento, e o custo é uma
+   linha.
 
 ### 8.3 Orçamento de caminho
 
-Teto conservador de **200 caracteres** para o caminho completo, contado a partir
-da raiz do projeto de destino.
+**O teto é do CAMINHO COMPLETO, não do nome do arquivo.** O que quebra o
+Premiere é o caminho inteiro; orçar só o nome deixaria a pasta de projeto fora
+da conta, que é justamente a parte que cresce.
 
-Justificativa: o limite real do NTFS é 255 por componente e o `MAX_PATH` é 260,
-mas `LongPathsEnabled` está ativo na máquina de destino e mascara o problema
-localmente. Premiere, After Effects e Resolve não são confiáveis com caminhos
-longos, e o material vai para HD externo, NAS e máquina de cliente. Footage que
-o Windows aceita mas o Premiere não abre é pior do que um download que falha na
-hora.
+```
+teto do caminho completo = 240 caracteres
+```
+
+**De onde vem o 240:** 260 é o `MAX_PATH` clássico do Windows, menos **20 de
+folga** para os arquivos temporários que o yt-dlp cria antes do merge. Esses
+temporários são mais longos que o nome final:
+
+| Arquivo | Custo sobre `.mp4` |
+|---|---|
+| `NOME.f137.mp4.part` | +10 |
+| `NOME.f251.webm.part` | +11 |
+| `NOME.f616-drc.mp4.part` | +14 |
+
+Verificado em `downloader/common.py:217-230`: `.part` e `.ytdl` são sufixos
+simples concatenados. A folga de 20 cobre o pior caso com margem.
+
+`LongPathsEnabled=1` na máquina de destino mascara o problema localmente: o
+Windows aceita e o Premiere não abre. E o material vai para HD externo, NAS e
+máquina de cliente, onde o registro pode estar desligado.
+
+#### Ordem de reserva
+
+O custo fixo é reservado **primeiro**; o que sobra é o orçamento do título:
+
+```
+fixo   = len(pasta) + 1 + len(data) + len(" - ") + len(" [") + len(id) + len("]") + len(ext)
+título = 240 - fixo - 5
+```
+
+Para um id do YouTube (11) com `.mp4` e data de 8 dígitos, o fixo é
+`len(pasta) + 30`.
+
+**Os 5 caracteres a mais são reserva para o sufixo de colisão** (` (2)` a
+` (99)`, §8.4). Ele é acrescentado **depois** do truncamento; sem a reserva, um
+título que couber exatamente no orçamento estoura o teto assim que houver uma
+colisão. É barato — o orçamento típico do título passa de 170 caracteres, e o
+YouTube limita títulos a 100.
+
+Se `data_upload` for `None`, o bloco da data e o separador saem do template, e o
+fixo cai para `len(pasta) + 19`.
+
+#### Aviso de pasta profunda
+
+Se sobrarem **menos de 40 caracteres** para o título, emitir **aviso, não erro**:
+o download prossegue com o título truncado, e a interface informa que a pasta do
+projeto está profunda demais.
+
+Erro só quando o orçamento não cobre nem o custo fixo — aí não existe nome
+válido, e a mensagem precisa dizer qual projeto e por quantos caracteres passou.
+
+> Como o YouTube limita títulos a 100 caracteres, o truncamento só é acionado
+> quando a pasta do projeto passa de ~110 caracteres. É um caminho raro, mas o
+> aviso existe para ele ser visível quando acontecer.
 
 ### 8.4 Colisão
 
 Sufixo numérico antes da extensão: `nome (2).mp4`, `nome (3).mp4`. Nunca
 sobrescrever.
+
+**A comparação é case-insensitive.** O Windows não diferencia maiúsculas de
+minúsculas, mas os IDs do YouTube diferenciam: `LzS8kB6lIm0` e `lzs8kb6lim0`
+seriam vídeos distintos com o mesmo nome de arquivo no disco. Uma checagem
+sensível a caixa responderia "não existe" e o disco sobrescreveria footage em
+silêncio.
 
 ---
 
@@ -572,7 +671,11 @@ Registradas para revisão.
 | 3 | Job em `baixando` não é cancelável (409) | Cancelar no meio deixa `.part` órfão e estado ambíguo |
 | 4 | Datas em TEXT ISO-8601 UTC | SQLite não tem tipo de data; ISO ordena como texto |
 | 5 | Proibidos viram `-`, não homóglifos Unicode | Nome tem que ser digitável e buscável |
-| 6 | Orçamento de 200 chars de caminho | Margem para NLE e destino externo |
+| 6 | Orçamento de 240 chars de **caminho completo** | 260 do Windows menos 20 de folga para os temporários do yt-dlp (§8.3) |
+| 6b | Mapeamento **por caractere** proibido, não regra única | `\|` é separador, `/` é intervalo, `:` é ruído — achatar tudo em `-` destrói informação (§8.2) |
+| 6c | Fallback `video_{id}` quando não sobra nenhum alfanumérico | Uma regra cobre título vazio, só espaços, só pontuação e só emoji; o critério é ser digitável numa busca |
+| 6d | Aviso, e não erro, quando sobram menos de 40 chars para o título | O download ainda é possível; o que o usuário precisa é enxergar que a pasta está profunda demais |
+| 6e | Colisão comparada de forma case-insensitive | Windows não diferencia caixa, IDs do YouTube sim — sobrescrita silenciosa de footage é o pior modo de falha do projeto |
 | 7 | Polling de 1 s em vez de WebSocket | Um usuário, uma aba |
 | 8 | `motivo_falha` **e** `mensagem_falha`, ambos | Enum para lógica, texto original como fallback |
 | 9 | Perfil com `,` no seletor é erro de config | Quebra a premissa de um arquivo por job |
@@ -584,6 +687,6 @@ Registradas para revisão.
 |---|---|---|
 | 1 | Container do `edicao_4k`: `mkv` ou forçar `mp4`? | Proposto `mkv`; depende do fluxo de edição |
 | 2 | Embutir thumbnail no arquivo? | Recomendado **não**; `writethumbnail` como `.jpg` ao lado é mais barato |
-| 3 | Orçamento de 200 chars é adequado? | Depende da profundidade real das pastas de projeto |
+| 3 | ~~Orçamento de caminho~~ | **DECIDIDO**: 240 chars de caminho completo (§8.3) |
 | 4 | Retry automático em falha de rede? | Não especificado. Sugestão: manual no MVP |
 | 5 | Limpeza de `.part` órfãos na subida? | Não especificado |
