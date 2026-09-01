@@ -10,10 +10,18 @@ factual. Convenções em [CLAUDE.md](CLAUDE.md).
 
 ```
 T1 (adapter)  ──┐
-T2 (domínio)  ──┼──> T5 (fila) ──> T6 (API) ──> T7 (front)
-T3 (nomes)    ──┤                        │
-T4 (histórico)──┘                        └──> T8 (CLI)
+T2 (domínio)  ──┼──> T5 (fila) ──> T6 (API) ──┬──> CONTRATO-API.md
+T3 (nomes)    ──┤                             │         │
+T4 (histórico)──┘                             │         v
+                                              │   [Claude Design]
+                                              │         │
+                                              │         v
+                                              │      T7 (integração)
+                                              └──> T8 (CLI)
 ```
+
+O T6 produz o `CONTRATO-API.md`, que é a **entrada do Claude Design**. A
+interface visual é feita lá, fora deste repositório; o T7 só integra e corrige.
 
 T1 a T4 são independentes entre si e podem ser feitos em qualquer ordem.
 Sugestão: **T2 primeiro** — é o que ancora os modelos que todos os outros usam.
@@ -26,7 +34,7 @@ Sugestão: **T2 primeiro** — é o que ancora os modelos que todos os outros us
 | T4 | Histórico SQLite | medium | não | pendente |
 | T5 | Fila e worker | high | **sim** | pendente |
 | T6 | Back-end web | medium | não | pendente |
-| T7 | Front-end | high | não | pendente |
+| T7 | Integração do front-end | medium | não | pendente |
 | T8 | CLI | low | não | pendente |
 
 > Nos tickets marcados: escrever os testes **antes**, mostrar a lista de casos
@@ -423,49 +431,82 @@ FastAPI, só JSON, zero regra de negócio. Seis rotas.
 - `/api/inspecionar` com lista mista → 200, itens `ok` e não-`ok`
 - `/api/config` reflete ffmpeg ausente
 
+## Entregável extra: CONTRATO-API.md
+
+Ao concluir o T6, produzir `CONTRATO-API.md` na raiz. **Ele é a entrada do
+Claude Design**, que vai desenhar a interface sem conhecer o projeto — então
+escreva para quem chega de fora.
+
+Conteúdo obrigatório:
+
+1. Cada endpoint: método, caminho, parâmetros e forma da resposta
+2. **Um exemplo de resposta REAL de cada endpoint**, gerado a partir do
+   `spike_meta.json`. Nada inventado — rodar o código e colar a saída
+3. Os campos que exigem formatação na interface, com o motivo:
+   - `duracao_s` vem em **segundos** (`65`), não formatado
+   - `fps` é **fracionário** (`59.94`), truncar mostra `59`
+   - `tamanho_bytes` vem em **bytes**
+   - `thumbnail` **pode ser `null`** → precisa de placeholder
+   - `speed` e `eta` **podem ser `null`** durante o download
+4. Os seis estados de um job e o que a tela deve mostrar em cada:
+   `na_fila`, `baixando`, `concluido`, `falhou`, `cancelado`, `interrompido`
+5. O aviso de **site não-YouTube**: onde aparece na resposta
+   (`aviso` do item de `/api/inspecionar`) e por que existe (SPEC 5.3)
+
 ## Critério de pronto
 
 - `src/web/` não importa `src/domain/` — o teste de arquitetura garante
 - Todas as rotas testadas, incluindo os códigos de erro
+- `CONTRATO-API.md` escrito, com exemplos gerados de execução real
 - Suíte passando
 
 ## Fora do escopo
 
-Front-end, autenticação (fora de escopo do produto), WebSocket.
+Desenho da interface (é do Claude Design), autenticação (fora de escopo do
+produto), WebSocket.
 
 ---
 
-# T7 — Front-end
+# T7 — Integração do front-end
 
-**Esforço: high**
+**Esforço: medium**
+
+> **Mudança de escopo.** A interface visual **não é implementada aqui**. Ela é
+> feita no Claude Design a partir do `CONTRATO-API.md` produzido ao final do T6.
+> O papel deste ticket é **integrar e corrigir**, não desenhar.
 
 ## Objetivo
 
-HTML/CSS/JS puro. Sem framework, sem build.
+Integrar o HTML/CSS/JS trazido pelo autor e garantir que ele funciona contra a
+API real.
 
 ## Arquivos
 
-- `web/index.html`, `web/style.css`, `web/app.js`
+- `web/index.html`, `web/style.css`, `web/app.js` (recebidos, não criados)
 
 ## O que fazer
 
-1. Campo de colar links, vários, um por linha
-2. Cartão de preview por vídeo: thumbnail, título, canal, duração, seletor de
-   perfil, seletor de projeto
-3. Fila com barra de progresso, velocidade e tempo restante — **polling de 1 s**
-4. Botão de cancelar por item, desabilitado quando o job já começou
-5. Histórico com busca e botão "abrir pasta"
-6. Aviso no topo se o ffmpeg faltar
-7. Variáveis CSS no topo do `style.css` (já esboçadas)
-8. Código comentado, sem minificação
+1. Integrar os arquivos ao servidor estático do T6
+2. Garantir que o **polling de 1 s** funciona e não acumula requisições quando
+   uma resposta demora mais que o intervalo
+3. Garantir que os seis estados de job (`na_fila`, `baixando`, `concluido`,
+   `falhou`, `cancelado`, `interrompido`) são tratados na tela
+4. Garantir o tratamento de erro: 400, 404, 409 e 422 precisam virar mensagem
+   legível, não silêncio nem `[object Object]`
+5. **Corrigir o que não bater com o contrato real** — campo com outro nome,
+   tipo diferente, campo opcional tratado como obrigatório
 
 ## Cuidados
 
-- A thumbnail vem do CDN do site pela URL do metadado. O backend não a baixa
-  (RESEARCH §8). `thumbnail` pode ser `None` → placeholder.
-- `speed` e `eta` podem ser `None` → mostrar `--`, não `NaN` nem `undefined`.
-- Polling precisa parar de acumular se uma resposta demorar mais que o intervalo.
-- Duplicata já no histórico: avisar antes de enfileirar.
+Os mesmos pontos que o `CONTRATO-API.md` documenta, verificados contra o
+comportamento real:
+
+- `thumbnail` pode ser `None` → placeholder, nunca imagem quebrada
+- `speed` e `eta` podem ser `None` → `--`, nunca `NaN` nem `undefined`
+- `fps` é fracionário (`59.94`) → formatar, não truncar
+- `duracao_s` vem em segundos → formatar como `m:ss`
+- Aviso de site não-YouTube precisa aparecer no cartão, não sumir
+- Duplicata já no histórico: avisar antes de enfileirar
 
 ## Critério de pronto
 
@@ -473,11 +514,16 @@ HTML/CSS/JS puro. Sem framework, sem build.
   acompanhar, consultar histórico
 - Nenhum erro no console
 - Aviso de ffmpeg aparece quando ausente
+- Todo campo opcional do contrato foi exercitado com valor ausente
 
 ## Fora do escopo
 
-Framework, bundler, testes de browser automatizados, responsividade para celular
-(é ferramenta de desktop).
+**Desenhar a interface.** Escolha de cores, tipografia, layout e hierarquia
+visual são do Claude Design. Aqui só se mexe no visual para corrigir defeito
+funcional.
+
+Também fora: framework, bundler, testes de browser automatizados,
+responsividade para celular (é ferramenta de desktop).
 
 ---
 

@@ -113,6 +113,15 @@ Ambas medidas e documentadas em RESEARCH §7:
 
 ---
 
+## O front-end não é desenhado aqui
+
+A interface visual é feita no **Claude Design**, a partir do `CONTRATO-API.md`
+que o T6 produz. O papel deste repositório no T7 é **integrar e corrigir**:
+polling, estados, tratamento de erro e divergências com o contrato real.
+
+Não redesenhar cores, tipografia ou layout. Mexer no visual só para corrigir
+defeito funcional.
+
 ## Escopo
 
 Está em [SPEC.md §2.2](SPEC.md). Fora de escopo **em definitivo**: contorno de

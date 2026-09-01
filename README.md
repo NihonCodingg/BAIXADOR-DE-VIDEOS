@@ -102,7 +102,7 @@ para contornar a proteção.
 | Back-end web | FastAPI | Só orquestração e JSON; nenhuma regra de negócio. |
 | Persistência | SQLite (`sqlite3`, biblioteca padrão) | Histórico de um usuário local. Não justifica um servidor de banco. |
 | Configuração | YAML (`PyYAML`) | Perfis e projetos são editados à mão. |
-| Front-end | HTML/CSS/JS puro | Sem framework, sem etapa de build. |
+| Front-end | HTML/CSS/JS puro | Sem framework, sem etapa de build. O visual é desenhado no Claude Design a partir do `CONTRATO-API.md`; este repositório integra. |
 | Testes | `pytest` | Nenhum teste toca a rede. |
 | Externo | `ffmpeg` + `ffprobe` | Dependência de sistema, não do Python. |
 
