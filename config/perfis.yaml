@@ -1,11 +1,23 @@
 # Perfis de qualidade voltados para edição.
-# Justificativa técnica de cada seletor: RESEARCH.md, seção 2.2.
+# Justificativa técnica de cada seletor: RESEARCH.md 2.2 e SPEC.md 6.
 #
 # format      = filtro ELIMINATÓRIO (o que é inegociável)
 # format_sort = ordem de PREFERÊNCIA (nunca elimina, só decide o melhor)
 #
-# Sempre terminar a cadeia de `/` com um fallback simples, senão vídeos com
-# formatos incomuns falham com "Requested format is not available".
+# ---------------------------------------------------------------------------
+# O PLACEHOLDER {dim}
+# ---------------------------------------------------------------------------
+# O teto de qualidade é aplicado na MENOR dimensão do vídeo, não na altura.
+# Vídeo horizontal tem a altura como menor dimensão; vertical tem a largura.
+# Um filtro fixo [height<=1080] entrega 480x854 num Short — medido, SPEC 6.3.
+#
+# A gramática do yt-dlp não tem operador OR, então não dá para escrever
+# "height<=1080 ou width<=1080" num filtro só. A solução é resolver o campo em
+# tempo de execução, a partir da orientação que já conhecemos da inspeção.
+#
+# {dim} é substituído por "[height<=N]", "[width<=N]" ou "" (vazio, quando o
+# vídeo não tem formatos com dimensão — conteúdo só de áudio).
+# O N vem de `limite_dimensao`.
 #
 # PROIBIDO usar `,` no format: gera vários arquivos e quebra a premissa de
 # um arquivo por job. A carga rejeita.
@@ -14,7 +26,8 @@ perfis:
 
   edicao_1080:
     descricao: "1080p H.264 + AAC — abre nativo no Premiere/Resolve"
-    format: "bv*[height<=1080][vcodec^=avc1]+ba[acodec^=mp4a]/bv*[height<=1080]+ba/b[height<=1080]/b"
+    limite_dimensao: 1080
+    format: "bv*{dim}[vcodec^=avc1]+ba[acodec^=mp4a]/bv*{dim}+ba/b{dim}/b"
     format_sort: ["res:1080", "vcodec:h264", "acodec:aac", "fps"]
     merge_output_format: "mp4"
     postprocessors: []
@@ -22,9 +35,10 @@ perfis:
 
   edicao_4k:
     descricao: "Até 2160p — VP9/AV1, pode exigir transcode para a timeline"
+    limite_dimensao: 2160
     # NÃO filtra por avc1: o YouTube não serve H.264 acima de 1080p.
     # Um filtro de codec aqui faria o perfil cair em silêncio para 1080p.
-    format: "bv*[height<=2160]+ba/b[height<=2160]/b"
+    format: "bv*{dim}+ba/b{dim}/b"
     format_sort: ["res:2160", "fps", "vcodec:vp9", "acodec:aac"]
     # mkv aceita qualquer combinação de codecs sem atrito.
     merge_output_format: "mkv"
@@ -33,6 +47,7 @@ perfis:
 
   so_audio:
     descricao: "Só a trilha de áudio, em m4a"
+    limite_dimensao: null          # não usa dimensão
     format: "ba/b"
     format_sort: ["acodec:aac", "abr"]
     merge_output_format: "m4a"
@@ -47,7 +62,8 @@ perfis:
 
   preview_leve:
     descricao: "Até 480p, menor arquivo — para bater o olho antes de baixar"
-    format: "bv*[height<=480]+ba/b[height<=480]/b"
+    limite_dimensao: 480
+    format: "bv*{dim}+ba/b{dim}/b"
     # O `+` inverte a ordenação: prefere o MENOR arquivo.
     # Melhor que `worst`, que escolhe o pior em todos os aspectos.
     format_sort: ["res:480", "+size"]

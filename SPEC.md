@@ -286,12 +286,16 @@ pediu 4K.
 ```yaml
 edicao_1080:
   descricao: "1080p H.264 para timeline"
-  format: "bv*[height<=1080][vcodec^=avc1]+ba[acodec^=mp4a]/bv*[height<=1080]+ba/b[height<=1080]/b"
+  limite_dimensao: 1080
+  format: "bv*{dim}[vcodec^=avc1]+ba[acodec^=mp4a]/bv*{dim}+ba/b{dim}/b"
   format_sort: ["res:1080", "vcodec:h264", "acodec:aac", "fps"]
   merge_output_format: "mp4"
   postprocessors: []
   exige_ffmpeg: true
 ```
+
+`{dim}` é resolvido em tempo de execução (§6.3). `limite_dimensao: null`
+significa que o perfil não filtra por dimensão — é o caso do `so_audio`.
 
 ### 6.2 Validação obrigatória na carga
 
@@ -301,6 +305,96 @@ edicao_1080:
 - todo `key` de postprocessor existe em `yt_dlp.postprocessor`
 - `exige_ffmpeg: true` + ffmpeg ausente → perfil marcado indisponível na UI
 
+### 6.3 O teto de qualidade vai na MENOR dimensão
+
+**Decisão:** o limite de um perfil é aplicado à menor dimensão do vídeo, e o
+campo (`width` ou `height`) é resolvido em tempo de execução pela função pura
+`campo_limite()`.
+
+#### O problema
+
+Um filtro fixo `[height<=1080]` pressupõe vídeo horizontal. Num vídeo vertical
+(Short), a altura é a dimensão *maior*, então o filtro corta exatamente o que
+deveria manter.
+
+Medido no `spike_meta.json` real, um Short com formatos de 144x256 até 1080x1920:
+
+```
+pedindo edicao_1080 com [height<=1080]  ->  480x854
+o formato 1080 real do vídeo            ->  1080x1920
+```
+
+O resultado é pior que a simples perda de resolução: o primeiro ramo do seletor
+exige `[height<=1080]` **e** `[vcodec^=avc1]`, e o melhor H.264 abaixo de 1080
+de altura é 480x854. Os dois filtros se compõem e a degradação é maior que a
+soma das partes.
+
+#### Por que não dá para resolver na sintaxe do yt-dlp
+
+A condição correta é `min(width, height) <= N`, equivalente a
+`height <= N OR width <= N`. **A gramática do yt-dlp não tem OR.**
+
+`_build_format_filter` faz `fullmatch` de uma única comparação `chave op valor`;
+colchetes justapostos são AND. E o `/` não substitui o OR: ele escolhe o
+**primeiro ramo que produzir qualquer resultado**, não o melhor entre os ramos.
+Em `bv*[width<=1080]/bv*[height<=1080]`, um vídeo horizontal casa no primeiro
+ramo com formatos pequenos (854x480) e o ramo correto nunca é alcançado.
+Inverter a ordem apenas espelha o defeito.
+
+Também não existe filtro `res` — `res` só existe no `format_sort`, onde é
+calculado pela menor dimensão.
+
+#### Candidatos avaliados
+
+Testados com o motor de seleção real do yt-dlp (`build_format_selector` +
+`sort_formats`) contra os 45 formatos do fixture. A variante horizontal é
+derivada dos dados reais trocando largura por altura, para as duas orientações
+terem os mesmos codecs e bitrates.
+
+| Candidato | Vertical | Horizontal | Veredito |
+|---|---|---|---|
+| `[height<=1080]` | **480x854** | 1920x1080 | quebrado em vertical |
+| `[width<=1080]` | 1080x1920 | **1080x608** | quebrado em horizontal |
+| `[w<=1920][h<=1920]` | 1080x1920 | 1920x1080 | funciona, mas embute suposição de 16:9 num número mágico; vídeo quadrado 1920x1920 passa sem aviso |
+| sem teto + `format_sort res:1080` | 1080x1920 | 1920x1080 | funciona, mas é teto **suave**: só respeita o limite quando existe algum formato abaixo dele |
+| **campo resolvido por orientação** | **1080x1920** | **1920x1080** | **adotado** |
+
+O candidato adotado domina: entrega teto duro **e** correção em qualquer
+proporção, sem troca.
+
+#### A regra
+
+```python
+def campo_limite(formatos) -> str | None:
+    com_dimensao = [f for f in formatos if f.largura and f.altura]
+    if not com_dimensao:
+        return None
+    maior = max(com_dimensao, key=lambda f: f.largura * f.altura)
+    return "width" if maior.altura > maior.largura else "height"
+```
+
+- A orientação vem do formato de **maior área**, não do primeiro da lista — a
+  ordem dos formatos no info_dict não é garantida.
+- Formatos sem dimensão (só-áudio, storyboards) são ignorados na decisão.
+- Sem nenhum formato com dimensão, devolve `None` e o filtro é **omitido** do
+  seletor — não substituído por um padrão.
+
+#### Vídeo quadrado
+
+Largura igual a altura devolve **`height`**.
+
+Nesse caso os dois filtros selecionam exatamente o mesmo conjunto, então a
+escolha é convenção e não correção. `height` porque é assim que se descreve
+qualidade de vídeo — "1080p" significa 1080 linhas. A comparação é **estrita**:
+usa `width` apenas quando `altura > largura`.
+
+#### Regressão travada
+
+`tests/test_perfis.py` fixa o resultado medido: com o fixture real e o perfil
+`edicao_1080`, a seleção tem que ser `137+140` em 1080x1920, H.264 + AAC. Um
+segundo teste documenta que o filtro antigo entregava 480x854 no mesmo vídeo.
+
+O teste lê o `config/perfis.yaml` de verdade — editar o seletor quebra o teste.
 ---
 
 ## 7. Projetos

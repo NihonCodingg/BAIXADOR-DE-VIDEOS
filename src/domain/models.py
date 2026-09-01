@@ -40,10 +40,20 @@ TRANSICOES = {
 
 @dataclass(frozen=True)
 class Formato:
-    """Um stream disponível. Subconjunto do que o yt-dlp devolve."""
+    """Um stream disponível. Subconjunto do que o yt-dlp devolve.
+
+    `largura` e `altura` existem separadas de `resolucao` porque o teto de
+    qualidade é aplicado na MENOR dimensão, e para isso é preciso comparar as
+    duas numericamente (SPEC 6.3). `resolucao` é a string de exibição.
+
+    Ambas são opcionais: no fixture real, 12 dos 45 formatos não têm dimensão
+    (são só-áudio) e 4 são storyboards.
+    """
     format_id: str
     ext: str
     resolucao: str | None
+    largura: int | None
+    altura: int | None
     fps: float | None
     vcodec: str | None
     acodec: str | None
