@@ -1,0 +1,8 @@
+-r requirements.txt
+
+# Suíte de testes. NENHUM teste toca a rede: fixture vinda do spike_meta.json
+# e dublê de downloader para a fila.
+pytest>=8.0
+
+# Cliente de teste para as rotas do FastAPI, sem subir servidor.
+httpx>=0.27
