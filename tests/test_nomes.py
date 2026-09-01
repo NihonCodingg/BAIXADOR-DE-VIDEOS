@@ -382,10 +382,27 @@ def test_6_3_ponto_inicial_e_preservado():
 
 
 def test_6_4_saida_e_sempre_nfc():
-    """Título real tem ã, ç, í, ó. Normalizar evita que o mesmo título gere
-    dois nomes diferentes conforme a origem dos metadados."""
-    saida = sanitizar("Seleção histórica")
-    assert saida == unicodedata.normalize("NFC", saida)
+    """Entrada em NFD tem que sair em NFC.
+
+    A versão anterior deste teste era VACUOSA: usava uma string já em NFC, e
+    passava mesmo com a normalização removida (pego por teste de mutação).
+    A entrada agora é explicitamente decomposta.
+    """
+    nfd = unicodedata.normalize("NFD", "Seleção histórica")
+    assert nfd != "Seleção histórica", "a entrada precisa estar mesmo em NFD"
+
+    assert sanitizar(nfd) == "Seleção histórica"
+
+
+def test_6_4b_nfc_e_nfd_geram_o_mesmo_nome():
+    """O bug que a normalização evita: duas representações Unicode do mesmo
+    título gerando dois arquivos e dois registros no histórico."""
+    titulo = "Seleção histórica"
+    nome_nfc = montar_nome(unicodedata.normalize("NFC", titulo),
+                           VIDEO_ID, DATA, EXT)
+    nome_nfd = montar_nome(unicodedata.normalize("NFD", titulo),
+                           VIDEO_ID, DATA, EXT)
+    assert nome_nfc == nome_nfd
 
 
 def test_6_5_constantes_batem_com_o_spec():
