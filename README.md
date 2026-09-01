@@ -20,12 +20,13 @@ O que existe hoje:
 | `spike.py` — protótipo descartável | pronto, não executado ainda |
 | Estrutura de pastas e stubs | pronta |
 | Teste de arquitetura | passando (23 testes) |
-| Lógica de negócio (T1 a T8) | **não implementada** |
+| T3 — nomenclatura e sanitização | **implementado**, 95 testes |
+| T1, T2, T4 a T8 | não implementados |
 
 Os stubs levantam `NotImplementedError` com o ticket que os implementa. **As
 instruções de execução abaixo descrevem o alvo, não o que funciona hoje.**
 
-Rodar os testes:
+Suíte atual: **118 testes**. Rodar:
 
 ```bash
 python -m pytest tests/ -v

@@ -18,16 +18,16 @@ T4 (histórico)──┘                        └──> T8 (CLI)
 T1 a T4 são independentes entre si e podem ser feitos em qualquer ordem.
 Sugestão: **T2 primeiro** — é o que ancora os modelos que todos os outros usam.
 
-| Ticket | Assunto | Esforço | TDD com confirmação? |
-|---|---|---|---|
-| T1 | Adapter do yt-dlp | medium | não |
-| T2 | Domínio: validação, modelos, perfis | high | **sim** |
-| T3 | Domínio: nomenclatura e caminho | high | **sim** |
-| T4 | Histórico SQLite | medium | não |
-| T5 | Fila e worker | high | **sim** |
-| T6 | Back-end web | medium | não |
-| T7 | Front-end | high | não |
-| T8 | CLI | low | não |
+| Ticket | Assunto | Esforço | TDD com confirmação? | Estado |
+|---|---|---|---|---|
+| T1 | Adapter do yt-dlp | medium | não | pendente |
+| T2 | Domínio: validação, modelos, perfis | high | **sim** | pendente |
+| T3 | Domínio: nomenclatura e caminho | high | **sim** | ✔ concluído |
+| T4 | Histórico SQLite | medium | não | pendente |
+| T5 | Fila e worker | high | **sim** | pendente |
+| T6 | Back-end web | medium | não | pendente |
+| T7 | Front-end | high | não | pendente |
+| T8 | CLI | low | não | pendente |
 
 > Nos tickets marcados: escrever os testes **antes**, mostrar a lista de casos
 > de borda e **esperar confirmação** antes de implementar.
@@ -164,7 +164,21 @@ dict já carregado, porque o domínio não toca disco.
 
 # T3 — Domínio: nomenclatura, caminho e colisão
 
-**Esforço: high — TDD com confirmação**
+**Esforço: high — TDD com confirmação — ✔ CONCLUÍDO**
+
+> **A lista abaixo é histórica.** A lista confirmada e implementada está em
+> `tests/test_nomes.py` (95 testes). Quatro pontos mudaram durante a revisão:
+>
+> - substituição dos proibidos passou a ser **por caractere**, não regra única
+>   (`\|` → `" - "`, `/` → `-`, `:` → espaço, o resto removido)
+> - o fallback é **`video`**, não `video_{id}` — o `[{id}]` já dá unicidade
+> - "título de 300 chars" saiu (o YouTube limita a 100) e virou "100 chars +
+>   pasta profunda", que é o cenário que de fato estoura
+> - orçamento passou a ser de **caminho completo (240)**, não de nome, com 5
+>   caracteres reservados para o sufixo de colisão
+>
+> Acrescentados na revisão: colisão case-insensitive, normalização NFC, e
+> truncamento que não deixa ponto nem espaço no fim.
 
 ## Objetivo
 
@@ -515,7 +529,5 @@ Autocompletar, barra de progresso elaborada, modo interativo.
 
 # Pendências antes de começar
 
-1. **`spike_meta.json` não existe ainda.** Ele é fixture de T2 e T3. Gerar com
-   `python spike.py <URL>` antes de começar T2.
-2. **Decisões em aberto no SPEC §14** — nenhuma bloqueia o início, mas a nº 3
-   (orçamento de 200 caracteres de caminho) precisa estar decidida antes de T3.
+1. ~~`spike_meta.json` não existe~~ — **resolvido**: capturado e versionado.
+2. ~~Orçamento de caminho~~ — **decidido**: 240 do caminho completo (SPEC §8.3).
