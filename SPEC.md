@@ -212,6 +212,33 @@ A tradução "nome legível → configuração validada" é o produto.
    isso, o histórico registra duplicatas.
 3. **Deduplicar** a lista colada pelo usuário.
 
+#### Escopo da normalização, e a limitação que ele cria
+
+A normalização conhece **apenas o YouTube**. O comportamento é de três vias:
+
+| Entrada | Tratamento |
+|---|---|
+| URL do YouTube | Normaliza, deduplica, casa com o histórico |
+| URL de outro site suportado pelo yt-dlp | **Passa adiante sem normalizar**, com aviso |
+| Texto que não é URL nenhuma | `LinkInvalido` |
+
+Outros sites **não são rejeitados**: o yt-dlp suporta centenas de extractors e
+a ferramenta não deve fechar essa porta.
+
+**Limitação conhecida, aceita conscientemente:** para sites que não o YouTube,
+a deduplicação do lote e a checagem de "já baixei isso" só funcionam quando a
+URL colada é byte a byte idêntica à anterior. Duas formas diferentes da mesma
+URL geram dois registros no histórico e dois downloads.
+
+O motivo de não resolver isso genericamente: cada site tem sua própria forma
+canônica, e escrever normalizadores para centenas de extractors seria
+reimplementar o yt-dlp. O `webpage_url` do info_dict traz a forma canônica de
+qualquer site — mas só **depois** da chamada de rede, tarde demais para
+deduplicar um lote colado sem custo.
+
+A interface deve deixar o aviso visível no cartão de preview, e não escondê-lo
+num log.
+
 ### 5.4 Montagem do caminho por projeto e tratamento de colisão
 
 **Vive no domínio.** O `outtmpl` do yt-dlp monta caminhos, mas não conhece o
