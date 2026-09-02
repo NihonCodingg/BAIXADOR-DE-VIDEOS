@@ -128,5 +128,11 @@ def validar_seletor(seletor: str) -> None:
 
     É o `validar_seletor` injetado em carregar_perfis(): o domínio não pode
     importar yt_dlp (REGRA 1), então a checagem mora aqui.
+
+    build_format_selector só analisa a string — não toca a rede.
     """
-    raise NotImplementedError("T6")
+    ydl = yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True})
+    try:
+        ydl.build_format_selector(seletor)
+    finally:
+        ydl.close()

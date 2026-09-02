@@ -216,3 +216,30 @@ def test_baixar_nao_toca_ignoreerrors():
 def test_fabrica_padrao_e_o_youtubedl_real():
     import yt_dlp
     assert Downloader()._fabrica is yt_dlp.YoutubeDL
+
+
+# ===========================================================================
+# validar_seletor — a checagem de sintaxe injetada na carga dos perfis
+# ===========================================================================
+
+from src.download.adapter import validar_seletor  # noqa: E402
+
+
+def test_validar_seletor_aceita_os_quatro_perfis_reais():
+    import yaml
+    from pathlib import Path
+    raiz = Path(__file__).resolve().parent.parent
+    perfis = yaml.safe_load((raiz / "config" / "perfis.yaml").read_text(encoding="utf-8"))["perfis"]
+    for cfg in perfis.values():
+        lim = cfg["limite_dimensao"]
+        validar_seletor(cfg["format"].replace("{dim}", f"[height<={lim}]" if lim else ""))
+
+
+def test_validar_seletor_recusa_colchete_desbalanceado():
+    with pytest.raises(Exception):
+        validar_seletor("bv*[height<=1080]+ba[[[")
+
+
+def test_validar_seletor_nao_precisa_de_rede():
+    """Só analisa a string: roda em milissegundos e sem sockets."""
+    validar_seletor("ba/b")

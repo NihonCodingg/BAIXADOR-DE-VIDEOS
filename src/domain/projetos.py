@@ -8,6 +8,8 @@ Ticket: T6.
 
 from dataclasses import dataclass
 
+from .erros import ProjetoInvalido
+
 
 @dataclass(frozen=True)
 class Projeto:
@@ -21,4 +23,23 @@ def carregar_projetos(dados: dict) -> dict[str, Projeto]:
 
     Levanta ProjetoInvalido.
     """
-    raise NotImplementedError("T6")
+    if (not isinstance(dados, dict)
+            or not isinstance(dados.get("projetos"), dict)
+            or not dados["projetos"]):
+        raise ProjetoInvalido(
+            "Configuração de projetos vazia ou sem a chave 'projetos'.")
+
+    projetos: dict[str, Projeto] = {}
+    for chave, bruto in dados["projetos"].items():
+        nome = str(chave)
+        if not isinstance(bruto, dict):
+            raise ProjetoInvalido(f"Projeto {nome!r}: definição inválida.")
+        pasta = bruto.get("pasta")
+        if not isinstance(pasta, str) or not pasta.strip():
+            raise ProjetoInvalido(f"Projeto {nome!r}: 'pasta' ausente ou vazia.")
+        projetos[nome] = Projeto(
+            nome=nome,
+            rotulo=str(bruto.get("nome") or nome),
+            pasta=pasta.strip().rstrip("/\\"),
+        )
+    return projetos

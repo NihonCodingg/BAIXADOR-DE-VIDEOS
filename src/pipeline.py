@@ -7,8 +7,30 @@ Video ou Perfil (REGRA 2).
 Ticket: T6.
 """
 
+import os
+import threading
+import uuid
 from collections.abc import Callable
+from dataclasses import asdict
+from datetime import datetime, timezone
 from pathlib import Path
+
+import yaml
+
+from .domain.erros import LinkInvalido
+from .domain.models import EstadoJob, Job, Video, tem_audio, tem_video
+from .domain.nomes import montar_caminho, resolver_colisao
+from .domain.perfis import carregar_perfis, disponivel, opcoes_ytdlp
+from .domain.projetos import Projeto, carregar_projetos
+from .domain.validacao import normalizar_link, normalizar_lote
+from .download.adapter import Downloader, validar_seletor
+from .download.ffmpeg import detectar
+from .download.traducao_erros import ErroDeDownload
+from .queue.fila import Fila
+from .queue.worker import Preparacao, Worker
+from .storage.historico import Historico
+
+_ATIVOS = (EstadoJob.NA_FILA, EstadoJob.BAIXANDO)
 
 
 class ErroDePedido(Exception):
@@ -32,7 +54,121 @@ class Pipeline:
                  downloader=None, detectar_ffmpeg: Callable | None = None):
         """Carrega perfis e projetos, detecta o ffmpeg, abre o histórico e
         reconcilia os interrompidos (SPEC 10.1), sobe o worker."""
-        raise NotImplementedError("T6")
+        self._config_dir = Path(config_dir)
+        self._data_dir = Path(data_dir)
+        self._downloader = downloader or Downloader()
+        self._ffmpeg = (detectar_ffmpeg or detectar)()
+
+        self._perfis = carregar_perfis(
+            self._ler_yaml("perfis.yaml"), validar_seletor=validar_seletor)
+        self._projetos = carregar_projetos(self._ler_yaml("projetos.yaml"))
+        self._projetos_status = {
+            nome: self._checar_pasta(projeto)
+            for nome, projeto in self._projetos.items()
+        }
+
+        self._historico = Historico(self._data_dir / "historico.db")
+        self._historico.criar_schema()
+        # O que estava `baixando` quando o programa fechou vira `interrompido`
+        # — nunca concluído (SPEC 10.1).
+        self._historico.marcar_interrompidos()
+
+        self._fila = Fila()
+        self._cache_lock = threading.Lock()
+        self._videos: dict[str, Video] = {}        # url -> Video, da inspeção
+        self._avisos: dict[str, str] = {}          # job_id -> aviso do preparo
+
+        self._worker = Worker(self._fila, self._downloader, self._historico,
+                              self._preparar)
+        self._worker.iniciar()
+        self._encerrado = False
+
+    # ------------------------------------------------------------- subida
+
+    def _ler_yaml(self, nome: str) -> dict:
+        caminho = self._config_dir / nome
+        return yaml.safe_load(caminho.read_text(encoding="utf-8")) or {}
+
+    @staticmethod
+    def _checar_pasta(projeto: Projeto) -> tuple[bool, str | None]:
+        """SPEC 7: a pasta existe ou é criável, e é gravável.
+
+        DECISAO-PENDENTE: a pasta é CRIADA na subida, não só checada. É o
+        destino de qualquer forma, mas cria diretórios do projeto-exemplo do
+        YAML na primeira execução.
+        """
+        try:
+            Path(projeto.pasta).mkdir(parents=True, exist_ok=True)
+        except OSError as erro:
+            return False, f"não foi possível criar a pasta: {erro}"
+        if not os.access(projeto.pasta, os.W_OK):
+            return False, "sem permissão de escrita na pasta"
+        return True, None
+
+    # ---------------------------------------------------------- inspeção
+
+    def _obter_video(self, url: str) -> Video:
+        """Metadados pela rede, com cache por URL. O cache é otimização:
+        enfileirar sem inspecionar antes também funciona."""
+        with self._cache_lock:
+            video = self._videos.get(url)
+        if video is not None:
+            return video
+        info = self._downloader.inspecionar(url)
+        video = Video.de_info_dict(info)
+        with self._cache_lock:
+            self._videos[url] = video
+            if video.url_canonica:
+                self._videos[video.url_canonica] = video
+        return video
+
+    def _baixados(self, video: Video) -> dict:
+        """Por perfil, o registro concluído — é o aviso de duplicata."""
+        resultado = {}
+        for nome in self._perfis:
+            registro = self._historico.ja_baixado(video.extractor, video.video_id, nome)
+            if registro is not None:
+                resultado[nome] = {
+                    "caminho": registro.caminho,
+                    "projeto": registro.projeto,
+                    "resolucao": registro.resolucao,
+                    "concluido_em": registro.concluido_em,
+                }
+        return resultado
+
+    @staticmethod
+    def _video_dict(video: Video) -> dict:
+        com_dimensao = [f for f in video.formatos if f.largura and f.altura]
+        return {
+            "id": video.video_id,
+            "extractor": video.extractor,
+            "url_canonica": video.url_canonica,
+            "titulo": video.titulo,
+            "canal": video.canal,
+            "duracao_s": video.duracao_s,
+            "thumbnail": video.thumbnail_url,
+            "data_upload": video.data_upload,
+            # Pela MENOR dimensão, coerente com o teto dos perfis (SPEC 6.3):
+            # um Short 1080x1920 e um vídeo 1920x1080 mostram o mesmo "1080".
+            "qualidades": sorted({min(f.largura, f.altura) for f in com_dimensao}),
+            "formatos": [
+                {
+                    "format_id": f.format_id,
+                    "ext": f.ext,
+                    "resolucao": f.resolucao,
+                    "largura": f.largura,
+                    "altura": f.altura,
+                    "fps": f.fps,
+                    "vcodec": f.vcodec,
+                    "acodec": f.acodec,          # None = desconhecido, não ausente
+                    "tem_video": tem_video(f),
+                    "tem_audio": tem_audio(f),
+                    "tbr": f.tbr,
+                    "tamanho_bytes": f.tamanho_bytes,
+                }
+                for f in video.formatos
+            ],
+        }
 
     def inspecionar(self, texto_links: str) -> list[dict]:
         """Normaliza, valida e busca metadados. Não baixa.
@@ -40,28 +176,204 @@ class Pipeline:
         Resultado parcial: cada item traz seu próprio `ok`. Um link ruim numa
         lista de dez não invalida os outros nove (SPEC 11.1).
         """
-        raise NotImplementedError("T6")
+        itens: list[dict] = []
+        for link in normalizar_lote(texto_links):
+            if not link.ok:
+                itens.append({"ok": False, "original": link.original,
+                              "url": None, "erro": link.erro,
+                              "motivo": "link_invalido"})
+                continue
+            try:
+                video = self._obter_video(link.url)
+            except ErroDeDownload as erro:
+                itens.append({"ok": False, "original": link.original,
+                              "url": link.url, "erro": erro.classificacao.mensagem,
+                              "motivo": erro.motivo.value})
+                continue
+            itens.append({
+                "ok": True,
+                "original": link.original,
+                "url": link.url,
+                "e_youtube": link.e_youtube,
+                "aviso": link.aviso,
+                "video": self._video_dict(video),
+                "baixados": self._baixados(video),
+            })
+        return itens
+
+    # ------------------------------------------------------------- fila
+
+    def _na_fila(self, video: Video, perfil: str) -> bool:
+        return any(
+            j.estado in _ATIVOS
+            and j.perfil == perfil
+            and j.video.extractor == video.extractor
+            and j.video.video_id == video.video_id
+            for j in self._fila.instantaneo()
+        )
 
     def enfileirar(self, urls: list[str], perfil: str, projeto: str,
                    forcar: bool = False) -> list[str]:
-        """Devolve os ids dos jobs. EntradaInvalida / Conflito."""
-        raise NotImplementedError("T6")
+        """Devolve os ids dos jobs. EntradaInvalida / Conflito.
+
+        Tudo ou nada: valida todos os links (inclusive duplicatas) antes de
+        enfileirar o primeiro.
+        """
+        if not urls:
+            raise EntradaInvalida("Nenhum link informado.")
+
+        definicao = self._perfis.get(perfil)
+        if definicao is None:
+            raise EntradaInvalida(f"Perfil {perfil!r} não existe.")
+        if not disponivel(definicao, self._ffmpeg.disponivel):
+            raise EntradaInvalida(
+                f"O perfil {perfil!r} exige ffmpeg, que não foi encontrado no PATH.")
+        if projeto not in self._projetos:
+            raise EntradaInvalida(f"Projeto {projeto!r} não existe.")
+        valido, motivo = self._projetos_status[projeto]
+        if not valido:
+            raise EntradaInvalida(f"Projeto {projeto!r} inválido: {motivo}")
+
+        jobs: list[Job] = []
+        for url in urls:
+            try:
+                link = normalizar_link(url)
+            except LinkInvalido as erro:
+                raise EntradaInvalida(str(erro)) from erro
+            try:
+                video = self._obter_video(link.url)
+            except ErroDeDownload as erro:
+                raise EntradaInvalida(erro.classificacao.mensagem) from erro
+
+            ja = self._historico.ja_baixado(video.extractor, video.video_id, perfil)
+            if ja is not None and not forcar:
+                raise Conflito(
+                    f"Já baixado no perfil {perfil!r}: {ja.caminho}. "
+                    f"Use forcar=true para baixar de novo.")
+            if self._na_fila(video, perfil) or any(
+                    j.video.video_id == video.video_id and j.perfil == perfil
+                    for j in jobs):
+                raise Conflito(f"Este vídeo já está na fila no perfil {perfil!r}.")
+
+            jobs.append(Job(
+                id=uuid.uuid4().hex, video=video, perfil=perfil, projeto=projeto,
+                estado=EstadoJob.NA_FILA, criado_em=datetime.now(timezone.utc),
+                url_original=link.original,
+            ))
+
+        return [self._fila.adicionar(job) for job in jobs]
+
+    def _preparar(self, job: Job) -> Preparacao:
+        """Chamado pelo worker, na thread dele, na hora de baixar.
+
+        Resolve perfil -> opções (com o teto na menor dimensão, SPEC 6.3) e
+        projeto + nome sanitizado -> destino, com colisão resolvida AGORA, não
+        na hora de enfileirar. NomeImpossivel sobe e vira falha do job.
+        """
+        perfil = self._perfis[job.perfil]
+        projeto = self._projetos[job.projeto]
+        Path(projeto.pasta).mkdir(parents=True, exist_ok=True)
+
+        montado = montar_caminho(
+            projeto.pasta, job.video.titulo, job.video.video_id,
+            job.video.data_upload, "." + perfil.merge_output_format)
+        if montado.aviso:
+            with self._cache_lock:
+                self._avisos[job.id] = montado.aviso
+
+        destino = resolver_colisao(montado.caminho, os.path.exists)
+        opcoes = opcoes_ytdlp(perfil, job.video.formatos, destino)
+        return Preparacao(url=job.video.url_canonica, opcoes=opcoes, destino=destino)
+
+    def _job_dict(self, job: Job) -> dict:
+        progresso = None
+        if job.progresso is not None:
+            p = job.progresso
+            progresso = {
+                "baixados": p.baixados,
+                "total": p.total,
+                "percentual": p.percentual,
+                "velocidade_bps": p.velocidade_bps,
+                "eta_s": p.eta_s,
+            }
+        with self._cache_lock:
+            aviso = self._avisos.get(job.id)
+        return {
+            "id": job.id,
+            "estado": job.estado.value,
+            "perfil": job.perfil,
+            "projeto": job.projeto,
+            "criado_em": job.criado_em.isoformat(timespec="seconds"),
+            "video": {
+                "id": job.video.video_id,
+                "titulo": job.video.titulo,
+                "canal": job.video.canal,
+                "duracao_s": job.video.duracao_s,
+                "thumbnail": job.video.thumbnail_url,
+            },
+            "progresso": progresso,
+            "caminho_final": job.caminho_final,
+            "motivo_falha": job.motivo_falha,
+            "mensagem_falha": job.mensagem_falha,
+            "aviso": aviso,
+        }
 
     def estado_fila(self) -> list[dict]:
-        raise NotImplementedError("T6")
+        return [self._job_dict(job) for job in self._fila.instantaneo()]
 
     def cancelar(self, job_id: str) -> bool:
-        """NaoEncontrado se não existe; Conflito se já começou."""
-        raise NotImplementedError("T6")
+        """NaoEncontrado se não existe; Conflito se já começou ou terminou."""
+        if self._fila.obter(job_id) is None:
+            raise NaoEncontrado(f"Job {job_id!r} não existe.")
+        if not self._fila.cancelar(job_id):
+            raise Conflito(
+                "Só é possível cancelar um job que ainda não começou (SPEC 10.5).")
+        return True
+
+    # --------------------------------------------------------- consultas
 
     def historico(self, termo: str | None = None, projeto: str | None = None,
                   limite: int = 100) -> list[dict]:
-        raise NotImplementedError("T6")
+        return [asdict(r) for r in self._historico.buscar(termo, projeto, limite)]
 
     def config(self) -> dict:
         """Perfis, projetos e status do ffmpeg. Alimenta GET /api/config."""
-        raise NotImplementedError("T6")
+        return {
+            "ffmpeg": {
+                "disponivel": self._ffmpeg.disponivel,
+                "completo": self._ffmpeg.completo,
+                "ffmpeg": self._ffmpeg.ffmpeg,
+                "ffprobe": self._ffmpeg.ffprobe,
+            },
+            "perfis": [
+                {
+                    "nome": p.nome,
+                    "descricao": p.descricao,
+                    "disponivel": disponivel(p, self._ffmpeg.disponivel),
+                    "exige_ffmpeg": p.exige_ffmpeg,
+                    "limite_dimensao": p.limite_dimensao,
+                    "container": p.merge_output_format,
+                }
+                for p in self._perfis.values()
+            ],
+            "projetos": [
+                {
+                    "nome": pj.nome,
+                    "rotulo": pj.rotulo,
+                    "pasta": pj.pasta,
+                    "valido": self._projetos_status[pj.nome][0],
+                    "motivo": self._projetos_status[pj.nome][1],
+                }
+                for pj in self._projetos.values()
+            ],
+        }
+
+    # ------------------------------------------------------------ fim
 
     def encerrar(self) -> None:
         """Para o worker e fecha o histórico. Idempotente."""
-        raise NotImplementedError("T6")
+        if self._encerrado:
+            return
+        self._encerrado = True
+        self._worker.parar(timeout=5.0)
+        self._historico.fechar()

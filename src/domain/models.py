@@ -233,7 +233,6 @@ class Job:
     motivo_falha: str | None = None
     mensagem_falha: str | None = None
     url_original: str | None = None
-    aviso: str | None = None         # ex.: pasta do projeto profunda demais
 
     def transicionar(self, novo: EstadoJob) -> None:
         """Aplica uma transição, recusando as ilegais. SPEC 10.2.
