@@ -1,7 +1,8 @@
 """Traduz exceção do yt-dlp para MotivoFalha do domínio.
 
 Fica aqui, e não no domínio, porque precisa conhecer as classes do yt-dlp
-(SPEC 5.6).
+(SPEC 5.6). A taxonomia (MotivoFalha) e as mensagens em português vivem no
+domínio; esta camada só faz o mapeamento.
 
 O ponto central (RESEARCH 6.2): o yt-dlp embrulha quase tudo em DownloadError
 e guarda a exceção real em `.exc_info`. Classificar olhando só o DownloadError
@@ -9,56 +10,29 @@ transforma tudo em "erro genérico".
 
 A classificação por mensagem é frágil por natureza — o texto vem do site, não
 do yt-dlp. Por isso é uma TABELA de dados com fallback obrigatório que mostra a
-mensagem original.
+mensagem original. Quando o YouTube mudar o texto, a correção é uma linha de
+tabela, e o usuário nunca fica sem informação porque o fallback mostrou o
+original.
 
 Ticket: T1.
 """
 
 from dataclasses import dataclass, field
 
+from yt_dlp.networking.exceptions import network_exceptions
+from yt_dlp.utils import DownloadError, GeoRestrictedError, UnsupportedError
+
 from ..domain.erros import MENSAGENS, RETENTAVEIS, MotivoFalha
 
-
-@dataclass(frozen=True)
-class Classificacao:
-    """Resultado de classificar(): motivo + mensagem original + detalhes.
-
-    `detalhes` carrega o que o motivo tiver de específico: lista de países no
-    bloqueio regional, status HTTP na falha de rede.
-    """
-    motivo: MotivoFalha
-    mensagem_original: str
-    detalhes: dict = field(default_factory=dict)
-
-    @property
-    def mensagem(self) -> str:
-        raise NotImplementedError("T1")
-
-    @property
-    def retentavel(self) -> bool:
-        raise NotImplementedError("T1")
-
-
-class ErroDeDownload(Exception):
-    """A única exceção que sai do adapter. Carrega a classificação."""
-
-    def __init__(self, classificacao: Classificacao, original: Exception | None = None):
-        self.classificacao = classificacao
-        self.original = original
-        super().__init__(classificacao.mensagem if False else "")
-
-    @property
-    def motivo(self) -> MotivoFalha:
-        return self.classificacao.motivo
-
-    @property
-    def retentavel(self) -> bool:
-        return self.classificacao.retentavel
-
-# Substring (minúscula) -> motivo. Ordem importa: a primeira que casar vence.
-# Origem de cada string documentada em RESEARCH 6.3.
+# Substring (minúscula) -> motivo. A PRIMEIRA que casar vence, então o mais
+# específico vem antes: "drm protected" antes de "video unavailable", porque a
+# mensagem de DRM pode conter as duas.
+# Origem de cada string documentada em RESEARCH 6.3; as de ffmpeg vêm de
+# YoutubeDL.py:3544 e postprocessor/ffmpeg.py:225-234.
 TABELA_MENSAGENS: list[tuple[str, MotivoFalha]] = [
-    ("drm", MotivoFalha.DRM),
+    ("drm protected", MotivoFalha.DRM),
+    ("ffmpeg is not installed", MotivoFalha.SEM_FFMPEG),
+    ("ffmpeg not found", MotivoFalha.SEM_FFMPEG),
     ("private video", MotivoFalha.PRIVADO),
     ("video unavailable", MotivoFalha.INDISPONIVEL),
     ("age-restricted", MotivoFalha.RESTRICAO_IDADE),
@@ -68,21 +42,150 @@ TABELA_MENSAGENS: list[tuple[str, MotivoFalha]] = [
 ]
 
 
+@dataclass(frozen=True)
+class Classificacao:
+    """Resultado de classificar(): motivo + mensagem original + detalhes.
+
+    `detalhes` carrega o que o motivo tiver de específico: `paises` no
+    bloqueio regional, `status_http` na falha de rede.
+    """
+    motivo: MotivoFalha
+    mensagem_original: str
+    detalhes: dict = field(default_factory=dict)
+
+    @property
+    def mensagem(self) -> str:
+        """Texto legível em português, para a interface e o histórico.
+
+        No DESCONHECIDO a mensagem original vai junto: é o fallback que impede
+        o usuário de ficar sem informação quando o site muda o texto.
+        """
+        base = MENSAGENS[self.motivo]
+
+        if self.motivo is MotivoFalha.BLOQUEIO_REGIONAL and self.detalhes.get("paises"):
+            base += f" Disponível em: {', '.join(self.detalhes['paises'])}."
+        elif self.motivo is MotivoFalha.REDE and self.detalhes.get("status_http"):
+            base = f"Falha de rede (HTTP {self.detalhes['status_http']})."
+        elif self.motivo is MotivoFalha.DESCONHECIDO:
+            base += f" Detalhe: {self.mensagem_original}"
+
+        return base
+
+    @property
+    def retentavel(self) -> bool:
+        return self.motivo in RETENTAVEIS
+
+
+class ErroDeDownload(Exception):
+    """A única exceção que sai do adapter. Carrega a classificação.
+
+    `original` guarda a exceção do yt-dlp para diagnóstico; a interface e o
+    histórico usam só `classificacao`.
+    """
+
+    def __init__(self, classificacao: Classificacao, original: Exception | None = None):
+        self.classificacao = classificacao
+        self.original = original
+        super().__init__(classificacao.mensagem)
+
+    @property
+    def motivo(self) -> MotivoFalha:
+        return self.classificacao.motivo
+
+    @property
+    def retentavel(self) -> bool:
+        return self.classificacao.retentavel
+
+
 def desembrulhar(err: Exception) -> Exception:
-    """Extrai a exceção original de dentro do DownloadError."""
-    raise NotImplementedError("T1")
+    """Extrai a exceção original de dentro do DownloadError.
+
+    Desce enquanto houver `exc_info` com uma exceção dentro: trouble() pode
+    embrulhar um DownloadError que já embrulhava outro.
+    """
+    atual = err
+    vistos: set[int] = set()
+    while (isinstance(atual, DownloadError)
+           and atual.exc_info
+           and atual.exc_info[1] is not None
+           and id(atual) not in vistos):
+        vistos.add(id(atual))
+        atual = atual.exc_info[1]
+    return atual
+
+
+def _mensagem_de(err: Exception) -> str:
+    """A mensagem limpa. ExtractorError tem `orig_msg` sem o prefixo de id e
+    sem o boilerplate de "please report this issue" que str() acrescenta.
+    Exceção sem texto nenhum vira o nome da classe — nunca string vazia."""
+    texto = getattr(err, "orig_msg", None)
+    if not texto:
+        texto = str(err)
+    if not texto or not texto.strip():
+        texto = type(err).__name__
+    return texto
+
+
+def _excecao_de_rede(err: Exception):
+    """A própria exceção se for de rede, ou a `cause` se ela for.
+
+    Cobre o caso real de "Unable to download webpage": o tipo de fora é
+    ExtractorError, mas a causa é HTTPError. Sem olhar a causa, uma falha de
+    rede comum e retentável viraria DESCONHECIDO.
+    """
+    if isinstance(err, network_exceptions):
+        return err
+    causa = getattr(err, "cause", None)
+    if isinstance(causa, network_exceptions):
+        return causa
+    if isinstance(err, (ConnectionError, TimeoutError)):
+        return err
+    return None
 
 
 def classificar(err: Exception) -> Classificacao:
     """Devolve a Classificacao: motivo, mensagem original e detalhes.
 
-    A mensagem original SEMPRE volta, mesmo quando o motivo é DESCONHECIDO —
-    é o que impede o usuário de ficar sem informação quando o site muda o
-    texto do erro.
+    Primeiro por TIPO (confiável), depois por SUBSTRING da mensagem (frágil,
+    tabela de dados), e por fim o fallback DESCONHECIDO — que SEMPRE devolve a
+    mensagem original.
     """
-    raise NotImplementedError("T1")
+    original = desembrulhar(err)
+    mensagem = _mensagem_de(original)
+
+    # --- por tipo -----------------------------------------------------------
+    if isinstance(original, GeoRestrictedError):
+        return Classificacao(
+            MotivoFalha.BLOQUEIO_REGIONAL, mensagem,
+            {"paises": list(original.countries or [])},
+        )
+
+    if isinstance(original, UnsupportedError):
+        return Classificacao(MotivoFalha.SITE_NAO_SUPORTADO, mensagem)
+
+    rede = _excecao_de_rede(original)
+    if rede is not None:
+        detalhes = {}
+        status = getattr(rede, "status", None)
+        if status:
+            detalhes["status_http"] = status
+        return Classificacao(MotivoFalha.REDE, mensagem, detalhes)
+
+    if isinstance(original, OSError):
+        # ConnectionError e TimeoutError já saíram acima; o que sobra é disco:
+        # permissão negada, disco cheio, caminho inexistente.
+        return Classificacao(MotivoFalha.DISCO, mensagem)
+
+    # --- por mensagem ---------------------------------------------------------
+    texto = mensagem.lower()
+    for substring, motivo in TABELA_MENSAGENS:
+        if substring in texto:
+            return Classificacao(motivo, mensagem)
+
+    # --- fallback ----------------------------------------------------------
+    return Classificacao(MotivoFalha.DESCONHECIDO, mensagem)
 
 
 def traduzir(err: Exception) -> ErroDeDownload:
     """classificar() embrulhado na exceção que o adapter levanta."""
-    raise NotImplementedError("T1")
+    return ErroDeDownload(classificar(err), original=err)
