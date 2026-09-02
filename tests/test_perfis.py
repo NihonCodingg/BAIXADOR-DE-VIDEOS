@@ -403,3 +403,23 @@ def test_b12_carga_e_tudo_ou_nada():
 def test_b13_perfil_inexistente_no_conjunto():
     perfis = carregar_perfis({"perfis": {"bom": dict(BOM)}})
     assert "nao_existe" not in perfis
+
+
+# ===========================================================================
+# opcoes_ytdlp — o dict que o adapter recebe
+# (acrescentado depois do commit vermelho: a função é stub T2 e ficou fora da
+#  lista revisada; é montagem de dict, coberta indiretamente por resolver_format)
+# ===========================================================================
+
+from src.domain.perfis import opcoes_ytdlp       # noqa: E402
+
+
+def test_opcoes_ytdlp_monta_o_dict_com_seletor_resolvido():
+    p = validar_perfil("x", BOM)
+    opcoes = opcoes_ytdlp(p, [fmt(1080, 1920)], "D:/F/video.mp4")
+    assert opcoes["format"] == "bv*[width<=1080]+ba/b"
+    assert opcoes["format_sort"] == ["res:1080"]
+    assert opcoes["merge_output_format"] == "mp4"
+    assert opcoes["outtmpl"] == "D:/F/video.mp4"
+    assert opcoes["noplaylist"] is True, "segunda defesa contra playlist"
+    assert "," not in opcoes["format"]

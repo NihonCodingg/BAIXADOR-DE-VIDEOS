@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 
+from .erros import TransicaoIlegal
+
 
 class EstadoJob(str, Enum):
     NA_FILA = "na_fila"
@@ -61,6 +63,39 @@ class Formato:
     tamanho_bytes: int | None
 
 
+def _inteiro_positivo(valor) -> int | None:
+    """int > 0, ou None. Zero e valores inválidos viram None: width=0 é dado
+    corrompido, não um vídeo de largura zero."""
+    try:
+        n = int(valor)
+    except (TypeError, ValueError):
+        return None
+    return n if n > 0 else None
+
+
+def _formato_de_dict(bruto: dict) -> Formato:
+    """Converte UM formato do info_dict.
+
+    Tudo por .get(): a chave `acodec` está AUSENTE em 2 dos 45 formatos do
+    fixture real, e um acesso por colchete derrubaria a conversão inteira.
+    """
+    fps = bruto.get("fps")
+    tbr = bruto.get("tbr")
+    return Formato(
+        format_id=str(bruto.get("format_id") or ""),
+        ext=str(bruto.get("ext") or ""),
+        resolucao=bruto.get("resolution"),
+        largura=_inteiro_positivo(bruto.get("width")),
+        altura=_inteiro_positivo(bruto.get("height")),
+        fps=float(fps) if fps is not None else None,
+        vcodec=bruto.get("vcodec"),
+        acodec=bruto.get("acodec"),
+        tbr=float(tbr) if tbr is not None else None,
+        tamanho_bytes=_inteiro_positivo(
+            bruto.get("filesize") or bruto.get("filesize_approx")),
+    )
+
+
 @dataclass(frozen=True)
 class Video:
     """Metadados de um vídeo, obtidos sem baixar."""
@@ -79,8 +114,30 @@ class Video:
         """Converte o info_dict do yt-dlp neste modelo.
 
         Puro: recebe um dict já pronto, não chama o yt-dlp.
+
+        Storyboards (ext=mhtml) ficam FORA na conversão: são as miniaturas da
+        barra de progresso, não mídia. Nenhum consumidor os quer, e deixá-los
+        obrigaria cada um a lembrar de filtrar.
+
+        `url_canonica` vem de webpage_url: o yt-dlp já canonicaliza. A nossa
+        normalização serve à decisão barata antes da rede (SPEC 5.3).
         """
-        raise NotImplementedError("T2")
+        brutos = info.get("formats") or []
+        formatos = tuple(
+            _formato_de_dict(f) for f in brutos if f.get("ext") != "mhtml"
+        )
+        duracao = info.get("duration")
+        return cls(
+            video_id=str(info.get("id") or ""),
+            extractor=str(info.get("extractor_key") or info.get("extractor") or ""),
+            url_canonica=str(info.get("webpage_url") or info.get("original_url") or ""),
+            titulo=str(info.get("title") or ""),
+            canal=info.get("channel") or info.get("uploader"),
+            duracao_s=int(duracao) if duracao is not None else None,
+            thumbnail_url=info.get("thumbnail"),
+            data_upload=info.get("upload_date"),
+            formatos=formatos,
+        )
 
 
 @dataclass(frozen=True)
@@ -115,11 +172,18 @@ class Job:
     mensagem_falha: str | None = None
 
     def transicionar(self, novo: EstadoJob) -> None:
-        """Aplica uma transição, recusando as ilegais.
+        """Aplica uma transição, recusando as ilegais. SPEC 10.2.
 
-        Levanta TransicaoIlegal. Ticket T2.
+        Valida ANTES de mutar: se levantar, o job fica exatamente como estava.
+        Mesmo estado -> mesmo estado é ilegal por decisão do autor, para que
+        um worker reenviando estado apareça como erro em vez de passar batido.
         """
-        raise NotImplementedError("T2")
+        permitidas = TRANSICOES.get(self.estado, set())
+        if novo not in permitidas:
+            raise TransicaoIlegal(
+                f"Transição ilegal: {self.estado.value} -> {novo.value}"
+            )
+        self.estado = novo
 
 
 def tem_video(formato: Formato) -> bool:
@@ -128,7 +192,7 @@ def tem_video(formato: Formato) -> bool:
     `vcodec` está presente em 45/45 formatos do fixture real, então aqui não há
     o problema de chave ausente que existe em `acodec`.
     """
-    raise NotImplementedError("T2")
+    return formato.vcodec not in (None, "none", "")
 
 
 def tem_audio(formato: Formato) -> bool:
@@ -152,4 +216,9 @@ def tem_audio(formato: Formato) -> bool:
     Tratar 'desconhecido' como 'não tem' faria 233 e 234 não serem nem vídeo
     nem áudio, e eles sumiriam da lista.
     """
-    raise NotImplementedError("T2")
+    if formato.acodec == "none":
+        return False
+    if formato.acodec:
+        return True
+    # Desconhecido: só é áudio se não for vídeo.
+    return not tem_video(formato)
