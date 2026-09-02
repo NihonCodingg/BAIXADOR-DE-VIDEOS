@@ -28,7 +28,7 @@ Sugestão: **T2 primeiro** — é o que ancora os modelos que todos os outros us
 
 | Ticket | Assunto | Esforço | TDD com confirmação? | Estado |
 |---|---|---|---|---|
-| T1 | Adapter do yt-dlp | medium | não | pendente |
+| T1 | Adapter do yt-dlp | medium | não | ✔ concluído |
 | T2 | Domínio: validação, modelos, perfis | high | **sim** | ✔ concluído |
 | T3 | Domínio: nomenclatura e caminho | high | **sim** | ✔ concluído |
 | T4 | Histórico SQLite | medium | não | pendente |
@@ -44,7 +44,24 @@ Sugestão: **T2 primeiro** — é o que ancora os modelos que todos os outros us
 
 # T1 — Adapter do yt-dlp
 
-**Esforço: medium**
+**Esforço: medium — ✔ CONCLUÍDO**
+
+> **Concluído com quatro desvios do plano abaixo**, todos registrados nos
+> testes (`tests/test_adapter.py`, `tests/test_traducao_erros.py`,
+> `tests/test_ffmpeg.py`):
+>
+> - `classificar` devolve `Classificacao` (motivo, mensagem original,
+>   detalhes) em vez de tupla — precisava carregar países e status HTTP
+> - `ExtractorError` com **`cause` de rede** ("Unable to download webpage") é
+>   `REDE`, não `DESCONHECIDO`; era o caso retentável mais comum
+> - o adapter **escapa `%` no `outtmpl`**: medido que `%(` num caminho
+>   literal vira `NA` no yt-dlp
+> - **`overwrites=False` sempre**: footage nunca é sobrescrito (SPEC 8.4)
+>
+> Incidente encontrado no caminho: `src/download/` estava **ignorado pelo
+> `.gitignore`** (padrão `download/` sem barra inicial) e nunca tinha chegado
+> ao remoto. Corrigido, e o teste de arquitetura agora falha se qualquer
+> pacote de `src/` sumir.
 
 ## Objetivo
 

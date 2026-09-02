@@ -8,7 +8,7 @@ serviço, não tem autenticação e não deve ser exposta na rede.
 
 ## Estado atual
 
-**Em implementação.** O domínio (T2 e T3) está pronto; adapter, histórico, fila, API e CLI ainda são stubs.
+**Em implementação.** Domínio (T2, T3) e adapter do yt-dlp (T1) prontos; histórico, fila, API e CLI ainda são stubs.
 
 O que existe hoje:
 
@@ -20,14 +20,15 @@ O que existe hoje:
 | `spike.py` — protótipo descartável | executado; gerou o `spike_meta.json` usado como fixture |
 | Estrutura de pastas e stubs | pronta |
 | Teste de arquitetura | passando (23 testes) |
+| T1 — adapter do yt-dlp, tradução de erros, ffmpeg | **implementado** |
 | T2 — validação de link, modelos, perfis | **implementado** |
 | T3 — nomenclatura e sanitização | **implementado** |
-| T1, T4 a T8 | não implementados |
+| T4 a T8 | não implementados |
 
 Os stubs levantam `NotImplementedError` com o ticket que os implementa. **As
 instruções de execução abaixo descrevem o alvo, não o que funciona hoje.**
 
-Suíte atual: **251 testes**. Rodar:
+Suíte atual: **339 testes**. Rodar:
 
 ```bash
 python -m pytest tests/ -v
