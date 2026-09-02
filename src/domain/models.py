@@ -120,3 +120,36 @@ class Job:
         Levanta TransicaoIlegal. Ticket T2.
         """
         raise NotImplementedError("T2")
+
+
+def tem_video(formato: Formato) -> bool:
+    """True se o formato carrega stream de vídeo.
+
+    `vcodec` está presente em 45/45 formatos do fixture real, então aqui não há
+    o problema de chave ausente que existe em `acodec`.
+    """
+    raise NotImplementedError("T2")
+
+
+def tem_audio(formato: Formato) -> bool:
+    """True se o formato carrega stream de áudio.
+
+    TRÊS ESTADOS, não dois: tem / não tem / DESCONHECIDO.
+
+    Medido no fixture: a chave `acodec` está AUSENTE em 2 dos 45 formatos
+    (233 e 234, manifests HLS com resolution='audio only'). Ausente significa
+    "o yt-dlp ainda não sabe", não "não tem áudio".
+
+    A regra:
+      acodec == 'none'          -> não tem, explicitamente
+      acodec com valor          -> tem
+      acodec None (desconhecido) -> tem, SE o formato também não tiver vídeo;
+                                    caso contrário assume que não tem
+                                    (conservador: um formato de vídeo com
+                                    codec de áudio desconhecido é tratado
+                                    como só-vídeo, e o merge resolve)
+
+    Tratar 'desconhecido' como 'não tem' faria 233 e 234 não serem nem vídeo
+    nem áudio, e eles sumiriam da lista.
+    """
+    raise NotImplementedError("T2")

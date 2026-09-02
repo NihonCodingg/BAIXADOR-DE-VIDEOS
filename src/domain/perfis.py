@@ -74,20 +74,34 @@ def resolver_format(perfil: Perfil, formatos: Sequence[Formato]) -> str:
     return perfil.format.format(dim=resolver_dim(perfil, formatos))
 
 
-def carregar_perfis(dados: dict) -> dict[str, Perfil]:
+def carregar_perfis(dados: dict, validar_seletor=None) -> dict[str, Perfil]:
     """Valida e converte o dicionário lido do YAML.
 
     Recebe um dict já carregado — NÃO lê arquivo (o domínio não toca disco).
-    Levanta PerfilInvalido.
+
+    TUDO OU NADA: se um perfil for inválido, levanta PerfilInvalido e não
+    devolve nada. Um conjunto meio-carregado faria a UI mostrar alguns perfis e
+    omitir outros em silêncio.
     """
     raise NotImplementedError("T2")
 
 
-def validar_perfil(nome: str, bruto: dict) -> Perfil:
+def validar_perfil(nome: str, bruto: dict, validar_seletor=None) -> Perfil:
     """Valida um perfil isolado. Regras em SPEC 6.2.
 
-    Em particular: `format` não pode conter vírgula — múltiplos formatos
-    geram vários arquivos e quebram a premissa de um arquivo por job.
+    `validar_seletor` é um callable opcional que recebe o seletor e levanta se
+    a sintaxe for inválida. Entra INJETADO porque checar sintaxe exige
+    `build_format_selector` do yt-dlp, e a REGRA 1 proíbe importá-lo aqui.
+    Sem ele, a sintaxe não é checada e o domínio continua puro.
+    """
+    raise NotImplementedError("T2")
+
+
+def disponivel(perfil: Perfil, tem_ffmpeg: bool) -> bool:
+    """Se o perfil pode ser usado agora.
+
+    Perfil que exige ffmpeg numa máquina sem ffmpeg fica INDISPONÍVEL, e isso
+    é estado, não erro: a interface o mostra desabilitado, com o motivo.
     """
     raise NotImplementedError("T2")
 

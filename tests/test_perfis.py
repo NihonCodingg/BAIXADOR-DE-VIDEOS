@@ -257,3 +257,149 @@ def test_regressao_o_filtro_antigo_de_altura_degradava(info_dict_real):
         "o filtro fixo de altura entregava 480x854 neste Short; "
         f"veio {video['width']}x{video['height']}"
     )
+
+
+# ===========================================================================
+# GRUPO B — Carga e validação de perfis (SPEC 6.2)
+# ===========================================================================
+
+from src.domain.erros import PerfilInvalido          # noqa: E402
+from src.domain.perfis import (                      # noqa: E402
+    carregar_perfis,
+    disponivel,
+    validar_perfil,
+)
+
+BOM = {
+    "descricao": "ok",
+    "limite_dimensao": 1080,
+    "format": "bv*{dim}+ba/b",
+    "format_sort": ["res:1080"],
+    "merge_output_format": "mp4",
+    "postprocessors": [],
+    "exige_ffmpeg": True,
+}
+
+
+def com(**mudancas):
+    d = dict(BOM)
+    d.update(mudancas)
+    return d
+
+
+def test_b1_perfil_bom_carrega():
+    p = validar_perfil("x", BOM)
+    assert p.nome == "x" and p.limite_dimensao == 1080
+
+
+@pytest.mark.parametrize("bruto", [
+    com(format=None), com(format=""), com(format="   "),
+])
+def test_b2_format_ausente_ou_vazio(bruto):
+    with pytest.raises(PerfilInvalido):
+        validar_perfil("x", bruto)
+
+
+def test_b3_format_com_virgula_e_recusado():
+    """`,` baixa vários formatos e quebra a premissa de um arquivo por job."""
+    with pytest.raises(PerfilInvalido) as exc:
+        validar_perfil("x", com(format="bv*{dim}+ba,ba"))
+    assert "," in str(exc.value) or "vírgula" in str(exc.value).lower()
+
+
+def test_b4_merge_output_format_desconhecido():
+    with pytest.raises(PerfilInvalido):
+        validar_perfil("x", com(merge_output_format="avi"))
+
+
+def test_b5_postprocessor_inexistente_falha_na_carga():
+    """Melhor falhar ao ler a config do que com KeyError no meio de um job."""
+    with pytest.raises(PerfilInvalido):
+        validar_perfil("x", com(postprocessors=[{"key": "NaoExiste"}]))
+
+
+def test_b5b_postprocessor_real_e_aceito():
+    p = validar_perfil("x", com(postprocessors=[
+        {"key": "FFmpegExtractAudio", "preferredcodec": "m4a"}]))
+    assert p.postprocessors[0]["key"] == "FFmpegExtractAudio"
+
+
+def test_b6_exige_ffmpeg_sem_ffmpeg_fica_indisponivel_sem_excecao():
+    """Perfil indisponível é estado, não erro: a UI mostra desabilitado."""
+    p = validar_perfil("x", BOM)
+    assert disponivel(p, tem_ffmpeg=True) is True
+    assert disponivel(p, tem_ffmpeg=False) is False
+
+
+def test_b6b_perfil_que_nao_exige_ffmpeg_fica_disponivel():
+    p = validar_perfil("x", com(exige_ffmpeg=False))
+    assert disponivel(p, tem_ffmpeg=False) is True
+
+
+def test_b7_seletor_que_nao_parseia_falha_na_carga():
+    """Validação sintática entra INJETADA: chamar build_format_selector aqui
+    seria importar yt_dlp no domínio, o que a REGRA 1 proíbe."""
+    def validador(seletor):
+        if "[[[" in seletor:
+            raise ValueError("colchete desbalanceado")
+
+    with pytest.raises(PerfilInvalido):
+        validar_perfil("x", com(format="bv*{dim}[[[+ba"),
+                       validar_seletor=validador)
+
+
+def test_b7b_sem_validador_a_sintaxe_nao_e_checada():
+    """O domínio continua puro por padrão."""
+    p = validar_perfil("x", com(format="bv*{dim}[[[+ba"))
+    assert p is not None
+
+
+def test_b8_limite_dimensao_nao_numerico():
+    with pytest.raises(PerfilInvalido):
+        validar_perfil("x", com(limite_dimensao="mil e oitenta"))
+
+
+def test_b9_template_com_dim_mas_sem_limite():
+    """{dim} sem limite_dimensao ficaria sem valor para substituir."""
+    with pytest.raises(PerfilInvalido):
+        validar_perfil("x", com(limite_dimensao=None, format="bv*{dim}+ba/b"))
+
+
+def test_b9b_sem_dim_e_sem_limite_e_valido():
+    """É o caso do so_audio."""
+    p = validar_perfil("x", com(limite_dimensao=None, format="ba/b"))
+    assert p.limite_dimensao is None
+
+
+@pytest.mark.parametrize("dados", [{}, {"outra_chave": {}}, {"perfis": {}}])
+def test_b10_yaml_degenerado(dados):
+    with pytest.raises(PerfilInvalido):
+        carregar_perfis(dados)
+
+
+def test_b11_carrega_os_quatro_perfis_reais():
+    """Lê o config/perfis.yaml de verdade."""
+    from pathlib import Path
+    raiz = Path(__file__).resolve().parent.parent
+    dados = yaml.safe_load(
+        (raiz / "config" / "perfis.yaml").read_text(encoding="utf-8"))
+    perfis = carregar_perfis(dados)
+    assert set(perfis) == {"edicao_1080", "edicao_4k", "so_audio", "preview_leve"}
+    assert perfis["so_audio"].limite_dimensao is None
+    assert perfis["edicao_1080"].limite_dimensao == 1080
+
+
+def test_b12_carga_e_tudo_ou_nada():
+    """Estado parcial: um perfil inválido não pode deixar os outros carregados.
+
+    Um conjunto meio-carregado faz a UI mostrar alguns perfis e omitir outros
+    em silêncio. Melhor falhar na subida e o autor corrigir o YAML.
+    """
+    dados = {"perfis": {"bom": dict(BOM), "ruim": com(merge_output_format="avi")}}
+    with pytest.raises(PerfilInvalido):
+        carregar_perfis(dados)
+
+
+def test_b13_perfil_inexistente_no_conjunto():
+    perfis = carregar_perfis({"perfis": {"bom": dict(BOM)}})
+    assert "nao_existe" not in perfis
