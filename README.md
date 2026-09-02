@@ -26,12 +26,13 @@ O que existe hoje:
 | T4 — histórico SQLite | **implementado** |
 | T5 — fila, worker e progresso | **implementado** |
 | T6 — pipeline, API e `CONTRATO-API.md` | **implementado** |
+| Smoke test com download real | **passou**: 1080x1920 H.264 + AAC |
 | T7 (integração do front) e T8 (CLI) | pendentes |
 
 Os stubs levantam `NotImplementedError` com o ticket que os implementa. **As
 instruções de execução abaixo descrevem o alvo, não o que funciona hoje.**
 
-Suíte atual: **549 testes**. Rodar:
+Suíte atual: **584 testes**. Rodar:
 
 ```bash
 python -m pytest tests/ -v
