@@ -8,7 +8,7 @@ serviço, não tem autenticação e não deve ser exposta na rede.
 
 ## Estado atual
 
-**Em implementação.** Domínio (T2, T3), adapter do yt-dlp (T1), histórico SQLite (T4) e fila com worker (T5) prontos; API e CLI ainda são stubs.
+**Back-end completo; interface e CLI pendentes.** Domínio, adapter, histórico, fila e API estão implementados. A interface visual é desenhada fora do repositório a partir do `CONTRATO-API.md` e integrada no T7; a CLI é o T8.
 
 O que existe hoje:
 
@@ -25,12 +25,13 @@ O que existe hoje:
 | T3 — nomenclatura e sanitização | **implementado** |
 | T4 — histórico SQLite | **implementado** |
 | T5 — fila, worker e progresso | **implementado** |
-| T6 a T8 | não implementados |
+| T6 — pipeline, API e `CONTRATO-API.md` | **implementado** |
+| T7 (integração do front) e T8 (CLI) | pendentes |
 
 Os stubs levantam `NotImplementedError` com o ticket que os implementa. **As
 instruções de execução abaixo descrevem o alvo, não o que funciona hoje.**
 
-Suíte atual: **460 testes**. Rodar:
+Suíte atual: **549 testes**. Rodar:
 
 ```bash
 python -m pytest tests/ -v
@@ -130,7 +131,8 @@ winget install Gyan.FFmpeg
 
 ## Como rodar
 
-> Ainda não implementado. Esta seção descreve o alvo.
+> A API já sobe. A página em `web/` ainda é o esqueleto do T7, e a CLI (T8)
+> não existe. Antes de rodar, ajuste `config/projetos.yaml` para as suas pastas.
 
 Requisitos: Python 3.12+ e `ffmpeg` no `PATH`.
 
@@ -148,7 +150,7 @@ python -m src.web
 
 Depois abrir `http://127.0.0.1:8000`.
 
-Linha de comando, para uso rápido sem abrir o navegador:
+Linha de comando (T8, ainda não implementada):
 
 ```bash
 python -m src.cli --perfil edicao_1080 --projeto cliente_x URL
@@ -187,4 +189,6 @@ O domínio não faz rede, não toca disco e não conhece o yt-dlp.
 - [RESEARCH.md](RESEARCH.md) — pesquisa técnica: API do yt-dlp, seleção de
   formato, modelo de threads dos progress hooks, postprocessors, detecção de
   ffmpeg, mapeamento de exceções e limites de nome de arquivo no Windows.
+- [CONTRATO-API.md](CONTRATO-API.md) — a API que a interface consome, com exemplos
+  gerados por execução real. É a entrada do desenho da interface.
 - [CLAUDE.md](CLAUDE.md) — convenções de trabalho no repositório.

@@ -33,7 +33,7 @@ Sugestão: **T2 primeiro** — é o que ancora os modelos que todos os outros us
 | T3 | Domínio: nomenclatura e caminho | high | **sim** | ✔ concluído |
 | T4 | Histórico SQLite | medium | não | ✔ concluído |
 | T5 | Fila e worker | high | **sim** | ✔ concluído |
-| T6 | Back-end web | medium | não | pendente |
+| T6 | Back-end web | medium | não | ✔ concluído |
 | T7 | Integração do front-end | medium | não | pendente |
 | T8 | CLI | low | não | pendente |
 
@@ -452,7 +452,20 @@ SPEC 10.1), cancelar download em andamento.
 
 # T6 — Back-end web
 
-**Esforço: medium**
+**Esforço: medium — ✔ CONCLUÍDO**
+
+> **Concluído em duas rodadas TDD**: pipeline (`tests/test_pipeline.py`,
+> `tests/test_projetos.py`) e camada web (`tests/test_api.py`). Entregável
+> extra: `CONTRATO-API.md`, com exemplos gerados por execução real via
+> `scripts/gerar_exemplos_contrato.py`. Decisões além do plano:
+>
+> - respostas embrulhadas: `{"itens"}`, `{"ids"}`, `{"jobs"}`, `{"registros"}`
+>   — e **uma forma só de erro**, `{"erro": ...}`, inclusive no 422 e no 500
+> - `inspecionar` expõe `qualidades` pela menor dimensão e `baixados` por
+>   perfil; `enfileirar` é tudo-ou-nada e recusa duplicata (409) salvo `forcar`
+> - a colisão de nome é resolvida na hora de **baixar**, não de enfileirar
+> - o worker recebe `preparar` injetado do pipeline; a web nunca vê o domínio
+> - "abrir pasta" exige um endpoint que **não existe ainda** (CONTRATO §8)
 
 ## Objetivo
 
