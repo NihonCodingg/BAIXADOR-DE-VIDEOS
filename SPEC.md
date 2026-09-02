@@ -648,9 +648,20 @@ o fallback que impede "erro desconhecido" quando o site muda a mensagem
 
 ### 9.2 Valores de `status`
 
-`concluido`, `falhou`, `interrompido`.
+`baixando`, `concluido`, `falhou`, `interrompido`.
 
-A fila tem mais estados (§10.2); o histórico só registra desfechos.
+`baixando` é gravado **no início** do download. Sem essa linha, a reconciliação
+de §10.1 não teria o que marcar: um job morto no meio não deixaria rastro, e
+"marcar como interrompido" seria impossível. A fila tem mais estados (§10.2);
+o histórico registra o início e o desfecho.
+
+**Uma linha por chave**, representando a última tentativa (upsert). Rebaixar
+depois de uma falha substitui o registro anterior.
+
+O schema traz ainda `titulo_busca` (título normalizado: minúsculas, sem
+acento — o `LIKE` do SQLite só ignora caixa em ASCII) e `resolucao` (a
+resolução **realmente baixada**, para o usuário enxergar quando o seletor caiu
+num fallback abaixo do que o perfil pedia).
 
 ---
 
