@@ -1,34 +1,120 @@
 <!DOCTYPE html>
-<!-- Interface do Baixador de Footage. HTML/CSS/JS puro, sem build. Ticket T7. -->
 <html lang="pt-BR">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Baixador de Footage</title>
-  <link rel="stylesheet" href="style.css">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Baixador de Footage</title>
+<link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <!-- Aviso de ffmpeg ausente. Escondido por padrão; GET /api/config decide. -->
-  <div id="aviso-ffmpeg" class="aviso" hidden></div>
 
-  <header>
-    <h1>Baixador de Footage</h1>
-  </header>
+<!-- ============================================================
+     AVISO GLOBAL DE FFMPEG (só aparece se config.ffmpeg.disponivel === false)
+     ============================================================ -->
+<div class="banner" id="banner-ffmpeg" hidden>
+  <span class="banner__tag">ffmpeg ausente</span>
+  <span class="banner__msg" id="banner-ffmpeg-msg">Os perfis de edição não funcionam sem ffmpeg.</span>
+</div>
 
-  <main>
-    <!-- 1. Colar links -->
-    <section id="entrada"><!-- T7 --></section>
+<!-- ============================================================
+     BARRA DE TOPO
+     ============================================================ -->
+<header class="topbar">
+  <div class="topbar__brand">
+    <span class="topbar__mark" aria-hidden="true"></span>
+    <h1 class="topbar__title">Footage</h1>
+  </div>
+  <div class="topbar__meta">
+    <span class="pill" id="pill-ffmpeg" data-tone="neutral">ffmpeg —</span>
+    <span class="pill" id="pill-fila" data-tone="neutral">fila 0</span>
+    <span class="host">127.0.0.1:8000</span>
+  </div>
+</header>
 
-    <!-- 2. Cartões de preview -->
-    <section id="previews"><!-- T7 --></section>
+<main class="workspace">
 
-    <!-- 3. Fila, atualizada por polling de 1s -->
-    <section id="fila"><!-- T7 --></section>
+  <!-- ==========================================================
+       COLUNA A — ENTRADA + PREVIEW
+       ========================================================== -->
+  <div class="col col--a">
 
-    <!-- 4. Histórico com busca -->
-    <section id="historico"><!-- T7 --></section>
-  </main>
+    <!-- 1. ENTRADA -->
+    <section class="panel" id="entrada" aria-labelledby="h-entrada">
+      <div class="panel__head">
+        <h2 class="panel__title" id="h-entrada">Entrada</h2>
+        <span class="panel__note" id="contador-links">nenhum link</span>
+      </div>
+      <div class="panel__body">
+        <textarea id="campo-links" class="links" spellcheck="false"
+          placeholder="Cole os links aqui, um por linha"></textarea>
+        <div class="row row--gap">
+          <button class="btn btn--primary" id="btn-inspecionar">Inspecionar</button>
+          <button class="btn btn--ghost" id="btn-limpar-links">Limpar</button>
+        </div>
+        <p class="hint">Um link por linha. Linhas vazias e repetidas são ignoradas. Inspecionar não baixa nada.</p>
+      </div>
+    </section>
 
-  <script src="app.js"></script>
+    <!-- 2. PREVIEW -->
+    <section class="panel panel--grow" id="preview" aria-labelledby="h-preview">
+      <div class="panel__head">
+        <h2 class="panel__title" id="h-preview">Preview</h2>
+        <span class="panel__note" id="contador-preview"></span>
+      </div>
+
+      <!-- ações em lote: aplicam perfil/projeto a todos os cartões válidos -->
+      <div class="lote" id="lote" hidden>
+        <label class="field field--inline">
+          <span class="field__label">Perfil</span>
+          <select class="select" id="lote-perfil"></select>
+        </label>
+        <label class="field field--inline">
+          <span class="field__label">Projeto</span>
+          <select class="select" id="lote-projeto"></select>
+        </label>
+        <button class="btn btn--primary" id="btn-enfileirar-todos">Enfileirar todos</button>
+      </div>
+
+      <div class="panel__body" id="lista-preview"></div>
+    </section>
+
+  </div>
+
+  <!-- ==========================================================
+       COLUNA B — FILA (o painel mais olhado)
+       ========================================================== -->
+  <div class="col col--b">
+    <section class="panel panel--grow" id="fila" aria-labelledby="h-fila">
+      <div class="panel__head">
+        <h2 class="panel__title" id="h-fila">Fila</h2>
+        <span class="panel__note" id="resumo-fila"></span>
+      </div>
+      <div class="panel__body" id="lista-fila"></div>
+    </section>
+  </div>
+
+  <!-- ==========================================================
+       COLUNA C — HISTÓRICO
+       ========================================================== -->
+  <div class="col col--c">
+    <section class="panel panel--grow" id="historico" aria-labelledby="h-historico">
+      <div class="panel__head">
+        <h2 class="panel__title" id="h-historico">Histórico</h2>
+        <span class="panel__note" id="contador-historico"></span>
+      </div>
+      <div class="filtros">
+        <input type="search" class="input" id="busca-historico" placeholder="Buscar por título" spellcheck="false">
+        <select class="select" id="filtro-projeto"></select>
+      </div>
+      <div class="panel__body" id="lista-historico"></div>
+    </section>
+  </div>
+
+</main>
+
+<!-- avisos curtos de ação (copiar caminho, erro de requisição) -->
+<div class="toasts" id="toasts" aria-live="polite"></div>
+
+<script src="app.js"></script>
 </body>
 </html>
