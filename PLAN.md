@@ -32,7 +32,7 @@ Sugestão: **T2 primeiro** — é o que ancora os modelos que todos os outros us
 | T2 | Domínio: validação, modelos, perfis | high | **sim** | ✔ concluído |
 | T3 | Domínio: nomenclatura e caminho | high | **sim** | ✔ concluído |
 | T4 | Histórico SQLite | medium | não | ✔ concluído |
-| T5 | Fila e worker | high | **sim** | pendente |
+| T5 | Fila e worker | high | **sim** | ✔ concluído |
 | T6 | Back-end web | medium | não | pendente |
 | T7 | Integração do front-end | medium | não | pendente |
 | T8 | CLI | low | não | pendente |
@@ -357,7 +357,23 @@ Fila, migração de schema, limpeza de registros antigos.
 
 # T5 — Fila e worker
 
-**Esforço: high — TDD com confirmação**
+**Esforço: high — TDD com confirmação — ✔ CONCLUÍDO**
+
+> **Concluído** (casos de borda por conta do implementador, no modo de
+> autonomia vigente). 73 testes em `tests/test_fila.py`, `tests/test_worker.py`
+> e `tests/test_progresso.py`. O que a implementação decidiu além da lista:
+>
+> - `proximo()` já devolve o job em **BAIXANDO**, sob o mesmo lock do dequeue,
+>   para `cancelar()` não entrar na fresta entre retirar e começar
+> - **`AgregadorProgresso`** soma por `format_id`: no DASH multi-formato vídeo e
+>   áudio chegam de threads diferentes com bytes próprios (RESEARCH §3.4)
+> - a **resolução real** do `finished` do formato mesclado vai para o histórico
+> - opções e destino vêm de um **`preparar` injetado** (o pipeline resolve
+>   perfil, nome e pasta); o worker não conhece regra de negócio
+> - falha do histórico ao iniciar é falha do job, sem download: um arquivo sem
+>   linha no histórico contradiz "sei onde cada arquivo está"
+> - conclusão tardia depois de `parar()` não ressuscita o job
+> - tudo que sai da fila é **cópia**; nenhum hook pode levantar
 
 ## Objetivo
 
