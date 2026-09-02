@@ -487,7 +487,7 @@ Listas de `formatos` truncadas em 3 itens.
 ```json
 {
   "ids": [
-    "3c31223860ac4d40a5ccde12945420d2"
+    "bbfb01ebf24c448b815c99bfd388e670"
   ]
 }
 ```
@@ -500,11 +500,11 @@ Listas de `formatos` truncadas em 3 itens.
 {
   "jobs": [
     {
-      "id": "3c31223860ac4d40a5ccde12945420d2",
+      "id": "bbfb01ebf24c448b815c99bfd388e670",
       "estado": "baixando",
       "perfil": "edicao_1080",
       "projeto": "pessoal",
-      "criado_em": "2026-09-02T18:54:29+00:00",
+      "criado_em": "2026-09-02T18:55:47+00:00",
       "video": {
         "id": "LzS8kB6lIm0",
         "titulo": "Camisa azul da Seleção: críticas ao design e lembrança histórica",
@@ -629,11 +629,11 @@ Listas de `formatos` truncadas em 3 itens.
 {
   "jobs": [
     {
-      "id": "3c31223860ac4d40a5ccde12945420d2",
+      "id": "bbfb01ebf24c448b815c99bfd388e670",
       "estado": "concluido",
       "perfil": "edicao_1080",
       "projeto": "pessoal",
-      "criado_em": "2026-09-02T18:54:29+00:00",
+      "criado_em": "2026-09-02T18:55:47+00:00",
       "video": {
         "id": "LzS8kB6lIm0",
         "titulo": "Camisa azul da Seleção: críticas ao design e lembrança histórica",
@@ -648,17 +648,17 @@ Listas de `formatos` truncadas em 3 itens.
         "velocidade_bps": null,
         "eta_s": 0
       },
-      "caminho_final": "D:\FOOTAGE\\pessoal\\20260901 - Camisa azul da Seleção críticas ao design e lembrança histórica [LzS8kB6lIm0].mp4",
+      "caminho_final": "D:\\FOOTAGE\\pessoal\\20260901 - Camisa azul da Seleção críticas ao design e lembrança histórica [LzS8kB6lIm0].mp4",
       "motivo_falha": null,
       "mensagem_falha": null,
       "aviso": null
     },
     {
-      "id": "fc3e8dbbc80c40bc8f8543c9a297f359",
+      "id": "aecac92461fd496bab33a3db2b082522",
       "estado": "cancelado",
       "perfil": "so_audio",
       "projeto": "pessoal",
-      "criado_em": "2026-09-02T18:54:29+00:00",
+      "criado_em": "2026-09-02T18:55:47+00:00",
       "video": {
         "id": "LzS8kB6lIm0",
         "titulo": "Camisa azul da Seleção: críticas ao design e lembrança histórica",
@@ -694,14 +694,14 @@ Listas de `formatos` truncadas em 3 itens.
       "canal": "Canal Michuruca",
       "duracao_s": 65,
       "projeto": "pessoal",
-      "caminho": "D:\FOOTAGE\\pessoal\\20260901 - Camisa azul da Seleção críticas ao design e lembrança histórica [LzS8kB6lIm0].mp4",
+      "caminho": "D:\\FOOTAGE\\pessoal\\20260901 - Camisa azul da Seleção críticas ao design e lembrança histórica [LzS8kB6lIm0].mp4",
       "tamanho_bytes": 9437184,
       "resolucao": "1080x1920",
       "status": "concluido",
       "motivo_falha": null,
       "mensagem_falha": null,
-      "criado_em": "2026-09-02T18:54:29+00:00",
-      "concluido_em": "2026-09-02T18:54:29+00:00"
+      "criado_em": "2026-09-02T18:55:47+00:00",
+      "concluido_em": "2026-09-02T18:55:47+00:00"
     }
   ]
 }
@@ -725,14 +725,14 @@ Listas de `formatos` truncadas em 3 itens.
       "canal": "Canal Michuruca",
       "duracao_s": 65,
       "projeto": "pessoal",
-      "caminho": "D:\FOOTAGE\\pessoal\\20260901 - Camisa azul da Seleção críticas ao design e lembrança histórica [LzS8kB6lIm0].mp4",
+      "caminho": "D:\\FOOTAGE\\pessoal\\20260901 - Camisa azul da Seleção críticas ao design e lembrança histórica [LzS8kB6lIm0].mp4",
       "tamanho_bytes": 9437184,
       "resolucao": "1080x1920",
       "status": "concluido",
       "motivo_falha": null,
       "mensagem_falha": null,
-      "criado_em": "2026-09-02T18:54:29+00:00",
-      "concluido_em": "2026-09-02T18:54:29+00:00"
+      "criado_em": "2026-09-02T18:55:47+00:00",
+      "concluido_em": "2026-09-02T18:55:47+00:00"
     }
   ]
 }
@@ -817,10 +817,10 @@ Listas de `formatos` truncadas em 3 itens.
       },
       "baixados": {
         "edicao_1080": {
-          "caminho": "D:\FOOTAGE\\pessoal\\20260901 - Camisa azul da Seleção críticas ao design e lembrança histórica [LzS8kB6lIm0].mp4",
+          "caminho": "D:\\FOOTAGE\\pessoal\\20260901 - Camisa azul da Seleção críticas ao design e lembrança histórica [LzS8kB6lIm0].mp4",
           "projeto": "pessoal",
           "resolucao": "1080x1920",
-          "concluido_em": "2026-09-02T18:54:29+00:00"
+          "concluido_em": "2026-09-02T18:55:47+00:00"
         }
       }
     }
@@ -834,6 +834,6 @@ Listas de `formatos` truncadas em 3 itens.
 
 ```json
 {
-  "erro": "Já baixado no perfil 'edicao_1080': D:\FOOTAGE\\pessoal\\20260901 - Camisa azul da Seleção críticas ao design e lembrança histórica [LzS8kB6lIm0].mp4. Use forcar=true para baixar de novo."
+  "erro": "Já baixado no perfil 'edicao_1080': D:\\FOOTAGE\\pessoal\\20260901 - Camisa azul da Seleção críticas ao design e lembrança histórica [LzS8kB6lIm0].mp4. Use forcar=true para baixar de novo."
 }
 ```

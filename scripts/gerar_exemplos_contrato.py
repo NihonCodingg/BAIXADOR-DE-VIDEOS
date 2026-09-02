@@ -185,6 +185,6 @@ if __name__ == "__main__":
     import re
     # Caminhos devolvidos pelo download vêm com barra invertida (nativo do
     # Windows); os da config vêm como escritos. O exemplo preserva a diferença.
-    saida = re.sub(r"[A-Za-z]:\\\\(?:[^\"\\\\]+\\\\)*contrato-[A-Za-z0-9_]+\\\\FOOTAGE", r"D:\\FOOTAGE", saida)
+    saida = re.sub(r"[A-Za-z]:\\\\(?:[^\"\\\\]+\\\\)*contrato-[A-Za-z0-9_]+\\\\FOOTAGE", lambda m: "D:" + chr(92) * 2 + "FOOTAGE", saida)
     saida = re.sub(r"[A-Za-z]:/(?:[^\"/]+/)*contrato-[A-Za-z0-9_]+/FOOTAGE", "D:/FOOTAGE", saida)
     print(saida)
