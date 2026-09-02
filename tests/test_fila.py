@@ -274,3 +274,55 @@ def test_instantaneo_preserva_ordem_de_chegada():
     for i in ("c", "a", "b"):
         f.adicionar(job(id_=i))
     assert [j.id for j in f.instantaneo()] == ["c", "a", "b"]
+
+
+# ===========================================================================
+# ETAPA 2 — aviso no job (decisoes 1, 4 e 5) e ja_existia (decisao 1)
+# ===========================================================================
+
+def test_avisar_grava_no_job_sem_mudar_o_estado():
+    f = Fila()
+    f.adicionar(job())
+    f.avisar("j1", "a pasta do projeto esta profunda demais")
+    j = f.obter("j1")
+    assert j.aviso == "a pasta do projeto esta profunda demais"
+    assert j.estado is EstadoJob.NA_FILA
+
+
+def test_avisar_acumula_em_vez_de_sobrescrever():
+    f = Fila()
+    f.adicionar(job())
+    f.avisar("j1", "primeiro")
+    f.avisar("j1", "segundo")
+    assert "primeiro" in f.obter("j1").aviso and "segundo" in f.obter("j1").aviso
+
+
+def test_avisar_o_mesmo_texto_duas_vezes_nao_duplica():
+    f = Fila()
+    f.adicionar(job())
+    f.avisar("j1", "igual")
+    f.avisar("j1", "igual")
+    assert f.obter("j1").aviso.count("igual") == 1
+
+
+def test_avisar_job_inexistente_nao_levanta():
+    """Mesmo espirito de atualizar_progresso: chamado de caminhos que nao
+    podem quebrar."""
+    Fila().avisar("nao", "x")
+
+
+def test_concluir_pode_marcar_ja_existia():
+    f = Fila()
+    f.adicionar(job())
+    f.proximo(timeout=0)
+    f.concluir("j1", "D:/F/x.mp4", ja_existia=True)
+    j = f.obter("j1")
+    assert j.estado is EstadoJob.CONCLUIDO and j.ja_existia is True
+
+
+def test_concluir_normal_nao_marca_ja_existia():
+    f = Fila()
+    f.adicionar(job())
+    f.proximo(timeout=0)
+    f.concluir("j1", "D:/F/x.mp4")
+    assert f.obter("j1").ja_existia is False

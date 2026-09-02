@@ -39,30 +39,54 @@ def preparar_simples(j: Job) -> Preparacao:
                       destino=f"D:/F/{j.id}.mp4")
 
 
+class RegistroFalso:
+    def __init__(self, rid):
+        self.id = rid
+
+
 class HistoricoFalso:
-    """Gravador: registra as chamadas e sinaliza quando um job termina."""
+    """Gravador: registra as chamadas e sinaliza quando um job termina.
+
+    Espelha a interface por ID da tentativa (etapa 2, decisão 3).
+    """
 
     def __init__(self):
         self.chamadas = []
         self.terminou = threading.Event()
         self.falhar_em_iniciar = None
+        self.falhar_em_desfecho = None
+        self._proximo_id = 0
 
     def iniciar(self, video, *, perfil, projeto, url_original):
         self.chamadas.append(("iniciar", video.video_id, perfil, projeto, url_original))
         if self.falhar_em_iniciar:
             raise self.falhar_em_iniciar
+        self._proximo_id += 1
+        return RegistroFalso(self._proximo_id)
 
-    def concluir(self, extractor, video_id, perfil, *, caminho, tamanho_bytes, resolucao=None):
-        self.chamadas.append(("concluir", video_id, caminho, tamanho_bytes, resolucao))
-        self.terminou.set()
+    def registrar_destino(self, registro_id, caminho):
+        self.chamadas.append(("registrar_destino", registro_id, caminho))
 
-    def falhar(self, extractor, video_id, perfil, *, motivo, mensagem):
-        self.chamadas.append(("falhar", video_id, motivo, mensagem))
+    def concluir(self, registro_id, *, caminho, tamanho_bytes, resolucao=None,
+                 ja_existia=False):
+        self.chamadas.append(("concluir", registro_id, caminho, tamanho_bytes,
+                              resolucao, ja_existia))
         self.terminou.set()
+        if self.falhar_em_desfecho:
+            raise self.falhar_em_desfecho
+
+    def falhar(self, registro_id, *, motivo, mensagem):
+        self.chamadas.append(("falhar", registro_id, motivo, mensagem))
+        self.terminou.set()
+        if self.falhar_em_desfecho:
+            raise self.falhar_em_desfecho
+
+    def avisar(self, registro_id, texto):
+        self.chamadas.append(("avisar", registro_id, texto))
 
     def marcar_interrompidos(self):
         self.chamadas.append(("marcar_interrompidos",))
-        return 1
+        return []
 
 
 class DownloaderRoteirizado:
@@ -248,7 +272,7 @@ def test_erro_de_download_vira_falhou_com_motivo(montar):
     assert j.estado is EstadoJob.FALHOU
     assert j.motivo_falha == "privado"
     assert j.mensagem_falha == "Private video"
-    assert ("falhar", "LzS8kB6lIm0", "privado", "Private video") in hist.chamadas
+    assert ("falhar", 1, "privado", "Private video") in hist.chamadas
 
 
 def test_erro_inesperado_vira_falhou_desconhecido_e_o_worker_sobrevive(montar):
@@ -421,3 +445,110 @@ def test_integracao_com_historico_real(tmp_path):
     assert r.caminho == "D:/F/final.mp4"
     assert r.resolucao == "1080x1920"
     hist.fechar()
+
+
+# ===========================================================================
+# ETAPA 2 — decisoes 1, 4 e 5
+# ===========================================================================
+
+def test_decisao1_arquivo_ja_existente_e_sucesso_com_aviso(montar, tmp_path):
+    """Decisao 1: nao e falha, mas o usuario precisa saber que nao baixou.
+
+    O yt-dlp com overwrites=False dispararia 'finished' sem baixar e o job
+    pareceria um download normal. O worker detecta antes e marca.
+    """
+    destino = tmp_path / "ja_esta_aqui.mp4"
+    destino.write_bytes(b"x" * 4096)
+
+    def preparar(j):
+        return Preparacao(url="u", opcoes={"format": "b"}, destino=str(destino))
+
+    dl = DownloaderRoteirizado()
+    fila, w, hist = montar(dl, preparar=preparar)
+    fila.adicionar(job())
+    assert hist.terminou.wait(ESPERA)
+
+    j = fila.obter("j1")
+    assert j.estado is EstadoJob.CONCLUIDO, "nao e falha"
+    assert j.ja_existia is True
+    assert j.aviso and "ja existia" in j.aviso.lower().replace("\u00e1", "a")
+    assert j.caminho_final == str(destino)
+    assert dl.chamadas == [], "nao pode ter chamado o downloader"
+
+    concluir = next(c for c in hist.chamadas if c[0] == "concluir")
+    assert concluir[3] == 4096, "tamanho vem do arquivo que ja estava la"
+    assert concluir[5] is True, "ja_existia nao chegou ao historico"
+
+
+def test_download_normal_nao_marca_ja_existia(montar):
+    dl = DownloaderRoteirizado()
+    fila, w, hist = montar(dl)
+    fila.adicionar(job())
+    assert hist.terminou.wait(ESPERA)
+    j = fila.obter("j1")
+    assert j.ja_existia is False and j.aviso is None
+
+
+def test_worker_registra_o_destino_antes_de_baixar(montar):
+    """Decisao 5: sem o caminho gravado, um `interrompido` nao tem onde ser
+    procurado na subida seguinte."""
+    ordem = []
+
+    class Hist(HistoricoFalso):
+        def registrar_destino(self, registro_id, caminho):
+            ordem.append(("registrar_destino", caminho))
+            return super().registrar_destino(registro_id, caminho)
+
+    class Dl(DownloaderRoteirizado):
+        def baixar(self, *a, **k):
+            ordem.append(("baixar", None))
+            return super().baixar(*a, **k)
+
+    fila, w, hist = montar(Dl(), Hist())
+    fila.adicionar(job())
+    assert hist.terminou.wait(ESPERA)
+    assert [x[0] for x in ordem] == ["registrar_destino", "baixar"]
+    assert ordem[0][1] == "D:/F/j1.mp4"
+
+
+@pytest.mark.parametrize("desfecho", ["concluir", "falhar"])
+def test_decisao4_falha_ao_gravar_desfecho_vira_aviso_visivel(montar, desfecho):
+    """Decisao 4: nao pode ser silenciosa. A fila mostra o estado certo e o
+    job carrega o aviso de que o historico nao recebeu."""
+    hist = HistoricoFalso()
+    hist.falhar_em_desfecho = RuntimeError("banco travado")
+    erro = erro_de_download() if desfecho == "falhar" else None
+    fila, w, _ = montar(DownloaderRoteirizado(erro=erro), hist)
+    fila.adicionar(job())
+    assert hist.terminou.wait(ESPERA)
+
+    j = esperar_aviso(fila, "j1")
+    esperado = EstadoJob.CONCLUIDO if desfecho == "concluir" else EstadoJob.FALHOU
+    assert j.estado is esperado
+    assert j.aviso and "hist" in j.aviso.lower()
+
+
+def esperar_aviso(fila, job_id, espera=ESPERA):
+    import time
+    prazo = time.monotonic() + espera
+    while time.monotonic() < prazo:
+        j = fila.obter(job_id)
+        if j and j.aviso:
+            return j
+        time.sleep(0.01)
+    return fila.obter(job_id)
+
+
+def test_falha_ao_gravar_desfecho_nao_derruba_o_worker(montar):
+    hist = HistoricoFalso()
+    hist.falhar_em_desfecho = RuntimeError("banco travado")
+    dl = DownloaderRoteirizado()
+    fila, w, _ = montar(dl, hist)
+    fila.adicionar(job(id_="a"))
+    assert hist.terminou.wait(ESPERA)
+
+    hist.terminou.clear()
+    hist.falhar_em_desfecho = None
+    fila.adicionar(job(video_id="bbbbbbbbbbb", id_="b"))
+    assert hist.terminou.wait(ESPERA), "o worker morreu"
+    assert fila.obter("b").estado is EstadoJob.CONCLUIDO

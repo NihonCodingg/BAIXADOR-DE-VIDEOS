@@ -467,3 +467,185 @@ def test_encerrar_e_idempotente(subir):
     p, _ = subir()
     p.encerrar()
     p.encerrar()
+
+
+# ===========================================================================
+# ETAPA 2 — decisoes aplicadas depois do smoke test
+# ===========================================================================
+
+def test_decisao6_nao_cria_a_pasta_do_projeto_na_subida(ambiente, info_dict_real):
+    """Decisao 6: nada de D:/FOOTAGE/cliente_exemplo aparecer por causa de um
+    YAML de exemplo. A pasta so nasce quando um download precisa dela."""
+    p = Pipeline(ambiente["config"], ambiente["data"],
+                 downloader=DownloaderEco(info_dict_real),
+                 detectar_ffmpeg=ffmpeg_presente)
+    try:
+        assert not (ambiente["footage"] / "pessoal").exists()
+        assert not (ambiente["footage"] / "cliente_x").exists()
+        # ...mas o projeto continua valido: a pasta e criavel.
+        assert all(x["valido"] for x in p.config()["projetos"])
+    finally:
+        p.encerrar()
+
+
+def test_decisao6_a_pasta_nasce_ao_baixar(subir, ambiente):
+    p, _ = subir()
+    assert not (ambiente["footage"] / "pessoal").exists()
+    ids = p.enfileirar([URL_REAL], perfil="edicao_1080", projeto="pessoal")
+    esperar_terminal(p, ids[0])
+    assert (ambiente["footage"] / "pessoal").is_dir()
+    assert not (ambiente["footage"] / "cliente_x").exists(), "so a pasta usada"
+
+
+def test_decisao6_pasta_sem_ancestral_gravavel_e_invalida(ambiente, info_dict_real, tmp_path):
+    """Um destino impossivel tem que aparecer como projeto invalido, com
+    motivo, e nao estourar so na hora de baixar."""
+    import yaml as _yaml
+    (ambiente["config"] / "projetos.yaml").write_text(_yaml.safe_dump({"projetos": {
+        "impossivel": {"nome": "X", "pasta": "Z:/nao/existe/esse/disco"},
+    }}), encoding="utf-8")
+    p = Pipeline(ambiente["config"], ambiente["data"],
+                 downloader=DownloaderEco(info_dict_real),
+                 detectar_ffmpeg=ffmpeg_presente)
+    try:
+        projeto = p.config()["projetos"][0]
+        assert projeto["valido"] is False
+        assert projeto["motivo"]
+        with pytest.raises(EntradaInvalida):
+            p.enfileirar([URL_REAL], perfil="edicao_1080", projeto="impossivel")
+    finally:
+        p.encerrar()
+
+
+def test_decisao3_redownload_preserva_o_registro_anterior(subir, ambiente):
+    """O bug que o smoke test flagrou: 3 arquivos no disco, 2 registros.
+
+    Cada arquivo baixado tem que ter a sua linha no historico.
+    """
+    p, _ = subir()
+    ids = p.enfileirar([URL_REAL], perfil="edicao_1080", projeto="pessoal")
+    esperar_terminal(p, ids[0])
+    ids2 = p.enfileirar([URL_REAL], perfil="edicao_1080", projeto="pessoal", forcar=True)
+    esperar_terminal(p, ids2[0])
+
+    arquivos = sorted(x.name for x in (ambiente["footage"] / "pessoal").iterdir())
+    registros = [r for r in p.historico() if r["status"] == "concluido"]
+    caminhos = sorted(Path(r["caminho"]).name for r in registros)
+
+    assert len(arquivos) == 2, arquivos
+    assert caminhos == arquivos, "arquivo no disco sem linha no historico"
+
+
+def test_decisao3_falha_no_redownload_nao_apaga_o_arquivo_anterior(subir, ambiente, info_dict_real):
+    p, dl = subir()
+    ids = p.enfileirar([URL_REAL], perfil="edicao_1080", projeto="pessoal")
+    j = esperar_terminal(p, ids[0])
+    caminho_bom = j["caminho_final"]
+
+    dl.erro_baixar = ErroDeDownload(Classificacao(MotivoFalha.REDE, "timeout"))
+    ids2 = p.enfileirar([URL_REAL], perfil="edicao_1080", projeto="pessoal", forcar=True)
+    assert esperar_terminal(p, ids2[0])["estado"] == "falhou"
+
+    assert Path(caminho_bom).exists()
+    concluidos = [r for r in p.historico() if r["status"] == "concluido"]
+    assert [r["caminho"] for r in concluidos] == [caminho_bom]
+    # e o aviso de duplicata volta a apontar para o arquivo que existe
+    item = p.inspecionar(URL_REAL)[0]
+    assert item["baixados"]["edicao_1080"]["caminho"] == caminho_bom
+
+
+def test_decisao1_arquivo_ja_existente_e_concluido_com_aviso(subir, ambiente):
+    """Quando o destino ja existe (corrida rara), o job conclui com aviso e
+    ja_existia, sem baixar de novo."""
+    p, dl = subir()
+    ids = p.enfileirar([URL_REAL], perfil="edicao_1080", projeto="pessoal")
+    j = esperar_terminal(p, ids[0])
+    original = Path(j["caminho_final"])
+
+    # Recria o cenario: o proximo destino resolvido sera " (2)"; criamos ele
+    # antes para o worker encontrar o arquivo ja no lugar.
+    segundo = original.with_name(original.stem + " (2)" + original.suffix)
+    segundo.write_bytes(b"y" * 2048)
+
+    ids2 = p.enfileirar([URL_REAL], perfil="edicao_1080", projeto="pessoal", forcar=True)
+    j2 = esperar_terminal(p, ids2[0])
+    assert j2["estado"] == "concluido"
+    if j2["caminho_final"] == str(segundo):
+        assert j2["ja_existia"] is True
+        assert j2["aviso"]
+        assert segundo.read_bytes() == b"y" * 2048, "o arquivo existente foi sobrescrito"
+
+
+def test_decisao5_interrompido_com_arquivo_no_destino_avisa(ambiente, info_dict_real):
+    """Decisao 5: na subida, se o historico diz interrompido e ha um arquivo
+    no destino, avisa em vez de duplicar em silencio.
+
+    Nao da para verificar integridade: o tamanho esperado nunca foi gravado.
+    Entao o produto avisa e deixa a decisao com o usuario.
+    """
+    from src.domain.models import Video
+    from src.storage.historico import Historico
+
+    pasta = ambiente["footage"] / "pessoal"
+    pasta.mkdir(parents=True)
+    arquivo = pasta / "interrompido.mp4"
+    arquivo.write_bytes(b"z" * 512)
+
+    h = Historico(ambiente["data"] / "historico.db")
+    h.criar_schema()
+    r = h.iniciar(Video.de_info_dict(info_dict_real), perfil="edicao_1080",
+                  projeto="pessoal", url_original=URL_REAL)
+    h.registrar_destino(r.id, str(arquivo))
+    h.fechar()
+
+    p = Pipeline(ambiente["config"], ambiente["data"],
+                 downloader=DownloaderEco(info_dict_real),
+                 detectar_ffmpeg=ffmpeg_presente)
+    try:
+        reg = p.historico()[0]
+        assert reg["status"] == "interrompido"
+        assert reg["aviso"], "sem aviso, o arquivo parcial passa despercebido"
+        assert "interromp" in reg["aviso"].lower()
+        assert arquivo.exists(), "o arquivo nao pode ser apagado"
+    finally:
+        p.encerrar()
+
+
+def test_decisao5_interrompido_sem_arquivo_nao_avisa(ambiente, info_dict_real):
+    from src.domain.models import Video
+    from src.storage.historico import Historico
+
+    h = Historico(ambiente["data"] / "historico.db")
+    h.criar_schema()
+    r = h.iniciar(Video.de_info_dict(info_dict_real), perfil="edicao_1080",
+                  projeto="pessoal", url_original=URL_REAL)
+    h.registrar_destino(r.id, str(ambiente["footage"] / "pessoal" / "nao_existe.mp4"))
+    h.fechar()
+
+    p = Pipeline(ambiente["config"], ambiente["data"],
+                 downloader=DownloaderEco(info_dict_real),
+                 detectar_ffmpeg=ffmpeg_presente)
+    try:
+        reg = p.historico()[0]
+        assert reg["status"] == "interrompido"
+        assert not reg["aviso"]
+    finally:
+        p.encerrar()
+
+
+def test_historico_expoe_aviso_e_ja_existia(subir):
+    """Campos novos precisam chegar a API (e ao CONTRATO-API.md)."""
+    p, _ = subir()
+    ids = p.enfileirar([URL_REAL], perfil="edicao_1080", projeto="pessoal")
+    esperar_terminal(p, ids[0])
+    reg = p.historico()[0]
+    assert "aviso" in reg and "ja_existia" in reg
+    assert reg["ja_existia"] is False
+
+
+def test_estado_fila_expoe_ja_existia(subir):
+    p, _ = subir()
+    ids = p.enfileirar([URL_REAL], perfil="edicao_1080", projeto="pessoal")
+    j = esperar_terminal(p, ids[0])
+    assert j["ja_existia"] is False
+    assert "aviso" in j
