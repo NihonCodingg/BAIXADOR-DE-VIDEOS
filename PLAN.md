@@ -31,7 +31,7 @@ Sugestão: **T2 primeiro** — é o que ancora os modelos que todos os outros us
 | T1 | Adapter do yt-dlp | medium | não | ✔ concluído |
 | T2 | Domínio: validação, modelos, perfis | high | **sim** | ✔ concluído |
 | T3 | Domínio: nomenclatura e caminho | high | **sim** | ✔ concluído |
-| T4 | Histórico SQLite | medium | não | pendente |
+| T4 | Histórico SQLite | medium | não | ✔ concluído |
 | T5 | Fila e worker | high | **sim** | pendente |
 | T6 | Back-end web | medium | não | pendente |
 | T7 | Integração do front-end | medium | não | pendente |
@@ -295,7 +295,21 @@ Criar diretório, checar permissão de escrita, mover arquivo. Tudo isso é I/O.
 
 # T4 — Histórico SQLite
 
-**Esforço: medium**
+**Esforço: medium — ✔ CONCLUÍDO**
+
+> **Concluído.** 47 testes em `tests/test_historico.py`. O que a
+> implementação decidiu além do plano:
+>
+> - status **`baixando`** gravado no início (`iniciar`), sem o que a
+>   reconciliação de SPEC §10.1 não teria o que marcar — SPEC §9.2 corrigido
+> - **upsert**: uma linha por chave, a última tentativa; rebaixar depois de
+>   falha não viola o UNIQUE e começa limpo
+> - `ja_baixado` devolve só `concluido`; `obter` devolve qualquer status
+> - busca **normalizada** (minúsculas, sem acento): `selecao` acha `Seleção`;
+>   `%` e `_` no termo não viram curinga
+> - coluna **`resolucao`** com a resolução realmente baixada, para expor
+>   quando o seletor caiu num fallback
+> - uma conexão com `RLock`; o worker grava enquanto a web lê
 
 ## Objetivo
 

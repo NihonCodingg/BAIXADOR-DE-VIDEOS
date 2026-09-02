@@ -8,7 +8,7 @@ serviço, não tem autenticação e não deve ser exposta na rede.
 
 ## Estado atual
 
-**Em implementação.** Domínio (T2, T3) e adapter do yt-dlp (T1) prontos; histórico, fila, API e CLI ainda são stubs.
+**Em implementação.** Domínio (T2, T3), adapter do yt-dlp (T1) e histórico SQLite (T4) prontos; fila, API e CLI ainda são stubs.
 
 O que existe hoje:
 
@@ -23,12 +23,13 @@ O que existe hoje:
 | T1 — adapter do yt-dlp, tradução de erros, ffmpeg | **implementado** |
 | T2 — validação de link, modelos, perfis | **implementado** |
 | T3 — nomenclatura e sanitização | **implementado** |
-| T4 a T8 | não implementados |
+| T4 — histórico SQLite | **implementado** |
+| T5 a T8 | não implementados |
 
 Os stubs levantam `NotImplementedError` com o ticket que os implementa. **As
 instruções de execução abaixo descrevem o alvo, não o que funciona hoje.**
 
-Suíte atual: **339 testes**. Rodar:
+Suíte atual: **386 testes**. Rodar:
 
 ```bash
 python -m pytest tests/ -v
