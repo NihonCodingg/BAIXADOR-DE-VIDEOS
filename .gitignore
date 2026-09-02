@@ -15,23 +15,27 @@
 # A defesa principal é configurar o destino FORA do repositório (ex.: D:\FOOTAGE).
 # Estes padrões são a rede de segurança para o caso de o destino ser configurado
 # dentro do projeto.
-downloads/
-Downloads/
-download/
-footage/
-Footage/
-output/
-outputs/
-saida/
-saidas/
-videos/
-Videos/
-midia/
-media/
+#
+# ANCORADOS NA RAIZ (barra inicial) de propósito: sem a barra, "download/"
+# casa em qualquer profundidade e engole src/download/ — o pacote do adapter
+# ficou fora do remoto por causa disso durante todo o início do projeto.
+/downloads/
+/Downloads/
+/download/
+/footage/
+/Footage/
+/output/
+/outputs/
+/saida/
+/saidas/
+/videos/
+/Videos/
+/midia/
+/media/
 
 # Diretório de dados da aplicação (histórico, estado da fila, temporários)
-data/
-dados/
+/data/
+/dados/
 
 # -----------------------------------------------------------------------------
 # 2. Arquivos de mídia — em qualquer lugar da árvore
