@@ -29,7 +29,7 @@ Sugestão: **T2 primeiro** — é o que ancora os modelos que todos os outros us
 | Ticket | Assunto | Esforço | TDD com confirmação? | Estado |
 |---|---|---|---|---|
 | T1 | Adapter do yt-dlp | medium | não | pendente |
-| T2 | Domínio: validação, modelos, perfis | high | **sim** | pendente |
+| T2 | Domínio: validação, modelos, perfis | high | **sim** | ✔ concluído |
 | T3 | Domínio: nomenclatura e caminho | high | **sim** | ✔ concluído |
 | T4 | Histórico SQLite | medium | não | pendente |
 | T5 | Fila e worker | high | **sim** | pendente |
@@ -105,7 +105,24 @@ diretório de destino (é T3).
 
 # T2 — Domínio: validação, modelos e perfis
 
-**Esforço: high — TDD com confirmação**
+**Esforço: high — TDD com confirmação — ✔ CONCLUÍDO**
+
+> **A lista abaixo é histórica.** A lista confirmada e implementada está em
+> `tests/test_validacao.py`, `tests/test_models.py` e `tests/test_perfis.py`.
+> O que mudou durante a revisão, com dados do fixture real:
+>
+> - **teto de qualidade na menor dimensão** (SPEC §6.3): `[height<=1080]`
+>   entregava 480x854 num Short; o perfil virou template `{dim}` resolvido
+>   por `campo_limite()` — a gramática do yt-dlp não tem OR
+> - **`?si=` do botão compartilhar** era o caso mais provável de todos e não
+>   estava na lista — estava no `original_url` do fixture
+> - **`acodec` está AUSENTE** em 2 dos 45 formatos (não presente com `None`):
+>   o risco é `KeyError`, e a classificação precisa de três estados
+> - **storyboards** (`ext=mhtml`) saem na conversão, não na exibição
+> - normalização conhece **só o YouTube**; outros sites passam com aviso
+>   dentro do resultado (`LinkNormalizado.aviso`), nunca por print/log
+> - ID nu é rejeitado; mesmo→mesmo estado é ilegal; carga de perfis é
+>   tudo-ou-nada; nenhuma função deixa objeto em estado parcial ao levantar
 
 ## Objetivo
 

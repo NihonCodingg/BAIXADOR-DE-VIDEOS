@@ -8,7 +8,7 @@ serviço, não tem autenticação e não deve ser exposta na rede.
 
 ## Estado atual
 
-**Planejado e estruturado, ainda não implementado.**
+**Em implementação.** O domínio (T2 e T3) está pronto; adapter, histórico, fila, API e CLI ainda são stubs.
 
 O que existe hoje:
 
@@ -17,16 +17,17 @@ O que existe hoje:
 | [RESEARCH.md](RESEARCH.md) — pesquisa técnica | pronto |
 | [SPEC.md](SPEC.md) — especificação normativa | pronto |
 | [PLAN.md](PLAN.md) — tickets T1 a T8 | pronto |
-| `spike.py` — protótipo descartável | pronto, não executado ainda |
+| `spike.py` — protótipo descartável | executado; gerou o `spike_meta.json` usado como fixture |
 | Estrutura de pastas e stubs | pronta |
 | Teste de arquitetura | passando (23 testes) |
-| T3 — nomenclatura e sanitização | **implementado**, 95 testes |
-| T1, T2, T4 a T8 | não implementados |
+| T2 — validação de link, modelos, perfis | **implementado** |
+| T3 — nomenclatura e sanitização | **implementado** |
+| T1, T4 a T8 | não implementados |
 
 Os stubs levantam `NotImplementedError` com o ticket que os implementa. **As
 instruções de execução abaixo descrevem o alvo, não o que funciona hoje.**
 
-Suíte atual: **118 testes**. Rodar:
+Suíte atual: **251 testes**. Rodar:
 
 ```bash
 python -m pytest tests/ -v
