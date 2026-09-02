@@ -4,21 +4,40 @@ Ticket: T5.
 """
 
 import threading
+from collections.abc import Callable
+from dataclasses import dataclass
+
+from ..domain.models import Job
+
+
+@dataclass(frozen=True)
+class Preparacao:
+    """O que o worker precisa para chamar o adapter: resolvido pelo pipeline
+    (perfil -> opções, projeto + nome -> destino) e injetado como callable."""
+    url: str
+    opcoes: dict
+    destino: str
 
 
 class Worker:
-    """Consome a fila numa única thread.
+    """Consome a fila numa única thread daemon.
 
-    Recebe o downloader por injeção para que os testes usem um dublê e não
-    toquem a rede.
+    Downloader, histórico e `preparar` entram por injeção: os testes usam
+    dublês e não tocam a rede.
     """
 
-    def __init__(self, fila, downloader, historico):
+    def __init__(self, fila, downloader, historico,
+                 preparar: Callable[[Job], Preparacao]):
         self._fila = fila
         self._downloader = downloader
         self._historico = historico
+        self._preparar = preparar
         self._thread: threading.Thread | None = None
         self._parar = threading.Event()
+
+    @property
+    def vivo(self) -> bool:
+        raise NotImplementedError("T5")
 
     def iniciar(self) -> None:
         raise NotImplementedError("T5")

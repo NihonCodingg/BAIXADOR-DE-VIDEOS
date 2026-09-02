@@ -156,6 +156,16 @@ class Progresso:
     def percentual(self) -> float | None:
         raise NotImplementedError("T5")
 
+    @classmethod
+    def de_hook(cls, d: dict) -> "Progresso | None":
+        """Lê o dicionário do progress hook do yt-dlp.
+
+        Toda chave é opcional (RESEARCH 3.2): só .get(), nunca [ ]. Devolve
+        None para status 'error', desconhecido ou ausente — "check this first
+        and ignore unknown values", diz a docstring do yt-dlp.
+        """
+        raise NotImplementedError("T5")
+
 
 @dataclass
 class Job:
@@ -170,6 +180,7 @@ class Job:
     caminho_final: str | None = None
     motivo_falha: str | None = None
     mensagem_falha: str | None = None
+    url_original: str | None = None
 
     def transicionar(self, novo: EstadoJob) -> None:
         """Aplica uma transição, recusando as ilegais. SPEC 10.2.
