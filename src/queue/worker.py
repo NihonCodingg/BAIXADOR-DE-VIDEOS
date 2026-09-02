@@ -18,6 +18,11 @@ from ..domain.models import Job, Progresso
 from ..download.traducao_erros import ErroDeDownload
 from .progresso import AgregadorProgresso
 
+AVISO_JA_EXISTIA = ("O arquivo já existia no destino; o download foi pulado e "
+                    "nada foi sobrescrito.")
+AVISO_HISTORICO = ("O download terminou, mas o histórico não pôde ser "
+                   "atualizado: {erro}")
+
 # Intervalo em que o laço acorda para checar o pedido de parada.
 _PASSO_S = 0.05
 
@@ -111,20 +116,39 @@ class Worker:
         #    Conservador: sem registro, sem download. Um arquivo sem linha no
         #    histórico contradiz "sei onde cada arquivo está".
         try:
-            self._historico.iniciar(
+            registro = self._historico.iniciar(
                 job.video, perfil=job.perfil, projeto=job.projeto,
                 url_original=job.url_original or job.video.url_canonica)
         except Exception as erro:  # noqa: BLE001
             self._falhar(job, MotivoFalha.DISCO.value,
                          f"histórico indisponível: {_texto(erro)}")
             return
+        registro_id = getattr(registro, "id", None)
 
         # 2. Opções e destino, resolvidos pelo pipeline. Pasta profunda demais
         #    (NomeImpossivel) ou perfil inválido são falha DESTE job.
         try:
             preparacao = self._preparar(job)
         except Exception as erro:  # noqa: BLE001
-            self._falhar(job, MotivoFalha.DESCONHECIDO.value, _texto(erro))
+            self._falhar(job, MotivoFalha.DESCONHECIDO.value, _texto(erro),
+                         registro_id=registro_id)
+            return
+
+        # O caminho pretendido vai para o histórico ANTES do download: sem
+        # ele, um `interrompido` não tem onde ser procurado na subida
+        # seguinte (decisão 5).
+        if registro_id is not None:
+            try:
+                self._historico.registrar_destino(registro_id, preparacao.destino)
+            except Exception:  # noqa: BLE001
+                pass
+
+        # O arquivo já está lá (corrida entre a resolução de colisão e agora).
+        # Não é falha: o footage está no destino. Mas o usuário precisa saber
+        # que nada foi baixado (decisão 1).
+        if os.path.exists(preparacao.destino):
+            self._concluir(job, preparacao.destino, None, registro_id,
+                           ja_existia=True)
             return
 
         # 3. O hook: pode vir de outra thread (RESEARCH 3.4), dispara muitas
@@ -155,45 +179,50 @@ class Worker:
             caminho = self._downloader.baixar(
                 preparacao.url, preparacao.opcoes, ao_progredir)
         except ErroDeDownload as erro:
-            self._falhar(job, erro.motivo.value, erro.classificacao.mensagem_original)
+            self._falhar(job, erro.motivo.value, erro.classificacao.mensagem_original,
+                         registro_id=registro_id)
             return
         except Exception as erro:  # noqa: BLE001 — bug no adapter não mata a thread
-            self._falhar(job, MotivoFalha.DESCONHECIDO.value, _texto(erro))
+            self._falhar(job, MotivoFalha.DESCONHECIDO.value, _texto(erro),
+                         registro_id=registro_id)
             return
 
-        self._concluir(job, caminho, resolucao["valor"])
+        self._concluir(job, caminho, resolucao["valor"], registro_id)
 
     # ------------------------------------------------------------ desfechos
 
-    def _falhar(self, job: Job, motivo: str, mensagem: str) -> None:
+    def _falhar(self, job: Job, motivo: str, mensagem: str,
+                registro_id: int | None = None) -> None:
         try:
             self._fila.falhar(job.id, motivo=motivo, mensagem=mensagem)
         except TransicaoIlegal:
             return          # já interrompido por parar(): não mexe
+        if registro_id is None:
+            return
         try:
-            self._historico.falhar(job.video.extractor, job.video.video_id,
-                                   job.perfil, motivo=motivo, mensagem=mensagem)
-        except Exception:  # noqa: BLE001
-            # DECISAO-PENDENTE: falha ao gravar o desfecho no histórico fica
-            # silenciosa; a fila mostra o estado certo, o histórico não.
-            pass
+            self._historico.falhar(registro_id, motivo=motivo, mensagem=mensagem)
+        except Exception as erro:  # noqa: BLE001
+            # Decisão 4: não pode ser silenciosa. A fila mostra o estado
+            # certo; o aviso conta que o histórico ficou para trás.
+            self._fila.avisar(job.id, AVISO_HISTORICO.format(erro=_texto(erro)))
 
-    def _concluir(self, job: Job, caminho: str, resolucao: str | None) -> None:
+    def _concluir(self, job: Job, caminho: str, resolucao: str | None,
+                  registro_id: int | None = None, *, ja_existia: bool = False) -> None:
         try:
-            self._fila.concluir(job.id, caminho)
+            self._fila.concluir(job.id, caminho, ja_existia=ja_existia)
         except TransicaoIlegal:
             # Conclusão tardia depois de parar(): o job já é INTERROMPIDO e
-            # fica assim. O arquivo pode existir no disco.
-            # DECISAO-PENDENTE: nesse caso o histórico diz `interrompido` e o
-            # arquivo está completo; na próxima subida o usuário verá
-            # interrompido e um novo download cairia em colisão "(2)".
+            # fica assim. O arquivo pode existir no disco — a subida seguinte
+            # avisa sobre ele (decisão 5).
+            return
+        if ja_existia:
+            self._fila.avisar(job.id, AVISO_JA_EXISTIA)
+        if registro_id is None:
             return
         try:
             self._historico.concluir(
-                job.video.extractor, job.video.video_id, job.perfil,
-                caminho=caminho, tamanho_bytes=_tamanho_arquivo(caminho),
-                resolucao=resolucao)
-        except Exception:  # noqa: BLE001
-            # DECISAO-PENDENTE: idem _falhar — o arquivo existe e o job está
-            # concluído na fila, mas o histórico não recebeu a linha.
-            pass
+                registro_id, caminho=caminho,
+                tamanho_bytes=_tamanho_arquivo(caminho),
+                resolucao=resolucao, ja_existia=ja_existia)
+        except Exception as erro:  # noqa: BLE001
+            self._fila.avisar(job.id, AVISO_HISTORICO.format(erro=_texto(erro)))

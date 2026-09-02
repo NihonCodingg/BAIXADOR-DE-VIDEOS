@@ -166,7 +166,9 @@ def test_ciclo_feliz(montar):
     j = fila.obter("j1")
     assert j.estado is EstadoJob.CONCLUIDO
     assert j.caminho_final == "D:/F/final.mp4"
-    assert [c[0] for c in hist.chamadas] == ["iniciar", "concluir"]
+    # registrar_destino entra entre os dois desde a decisao 5: o caminho
+    # pretendido precisa estar gravado antes do download comecar.
+    assert [c[0] for c in hist.chamadas] == ["iniciar", "registrar_destino", "concluir"]
 
 
 def test_worker_usa_a_preparacao_injetada(montar):

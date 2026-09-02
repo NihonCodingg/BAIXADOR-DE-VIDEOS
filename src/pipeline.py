@@ -32,6 +32,12 @@ from .storage.historico import Historico
 
 _ATIVOS = (EstadoJob.NA_FILA, EstadoJob.BAIXANDO)
 
+AVISO_INTERROMPIDO = (
+    "O download foi interrompido, mas há um arquivo de {tamanho} bytes em "
+    "{caminho}. Não é possível verificar se está completo — confira antes de "
+    "usar, ou baixe de novo com forcar."
+)
+
 
 class ErroDePedido(Exception):
     """Base dos erros que a API traduz em código HTTP."""
@@ -71,7 +77,7 @@ class Pipeline:
         self._historico.criar_schema()
         # O que estava `baixando` quando o programa fechou vira `interrompido`
         # — nunca concluído (SPEC 10.1).
-        self._historico.marcar_interrompidos()
+        self._avisar_interrompidos_com_arquivo(self._historico.marcar_interrompidos())
 
         self._fila = Fila()
         self._cache_lock = threading.Lock()
@@ -93,17 +99,48 @@ class Pipeline:
     def _checar_pasta(projeto: Projeto) -> tuple[bool, str | None]:
         """SPEC 7: a pasta existe ou é criável, e é gravável.
 
-        DECISAO-PENDENTE: a pasta é CRIADA na subida, não só checada. É o
-        destino de qualquer forma, mas cria diretórios do projeto-exemplo do
-        YAML na primeira execução.
+        Decisão 6: NÃO cria nada aqui. Um YAML de exemplo não pode fazer
+        aparecer D:/FOOTAGE/cliente_exemplo na primeira execução. A pasta
+        nasce em _preparar, quando um download precisa dela.
+
+        Para uma pasta que ainda não existe, a checagem sobe até o primeiro
+        ancestral existente: se ele for gravável, a pasta é criável.
         """
-        try:
-            Path(projeto.pasta).mkdir(parents=True, exist_ok=True)
-        except OSError as erro:
-            return False, f"não foi possível criar a pasta: {erro}"
-        if not os.access(projeto.pasta, os.W_OK):
-            return False, "sem permissão de escrita na pasta"
+        alvo = Path(projeto.pasta)
+        if alvo.exists():
+            if not alvo.is_dir():
+                return False, "o caminho existe e não é uma pasta"
+            if not os.access(alvo, os.W_OK):
+                return False, "sem permissão de escrita na pasta"
+            return True, None
+
+        ancestral = next((a for a in alvo.parents if a.exists()), None)
+        if ancestral is None:
+            return False, "nenhuma pasta do caminho existe (disco ausente?)"
+        if not ancestral.is_dir() or not os.access(ancestral, os.W_OK):
+            return False, f"sem permissão de escrita em {ancestral}"
         return True, None
+
+    def _avisar_interrompidos_com_arquivo(self, interrompidos) -> None:
+        """Decisão 5: se um `interrompido` tem arquivo no destino, avisa.
+
+        Não dá para verificar integridade: o tamanho esperado nunca chegou a
+        ser gravado (o `concluir` não rodou). Então o produto avisa e deixa a
+        decisão com o usuário, em vez de concluir um arquivo possivelmente
+        truncado ou baixar uma duplicata " (2)" em silêncio.
+        """
+        for registro in interrompidos or []:
+            if not registro.caminho:
+                continue
+            try:
+                existe = os.path.isfile(registro.caminho)
+                tamanho = os.path.getsize(registro.caminho) if existe else 0
+            except OSError:
+                continue
+            if not existe:
+                continue
+            self._historico.avisar(registro.id, AVISO_INTERROMPIDO.format(
+                tamanho=tamanho, caminho=registro.caminho))
 
     # ---------------------------------------------------------- inspeção
 
@@ -297,10 +334,12 @@ class Pipeline:
                 "eta_s": p.eta_s,
             }
         with self._cache_lock:
-            aviso = self._avisos.get(job.id)
+            aviso_preparo = self._avisos.get(job.id)
+        aviso = " | ".join(x for x in (aviso_preparo, job.aviso) if x) or None
         return {
             "id": job.id,
             "estado": job.estado.value,
+            "ja_existia": job.ja_existia,
             "perfil": job.perfil,
             "projeto": job.projeto,
             "criado_em": job.criado_em.isoformat(timespec="seconds"),

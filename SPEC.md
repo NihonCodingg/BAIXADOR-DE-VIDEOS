@@ -441,6 +441,14 @@ projetos:
 Validação na carga: a pasta existe ou é criável, e é gravável. Um projeto
 inválido aparece desabilitado na interface, com o motivo.
 
+**A validação não cria nada.** Para uma pasta que ainda não existe, a checagem
+sobe até o primeiro ancestral existente e verifica se ele é gravável. A pasta
+só nasce quando um download precisa dela.
+
+O motivo é concreto: o `projetos.yaml` distribuído tem um projeto de exemplo, e
+criar as pastas na subida faria aparecer um `D:/FOOTAGE/cliente_exemplo` vazio
+na primeira execução, sem o usuário ter pedido nada.
+
 > **Recomendação forte:** apontar `pasta` para fora do repositório. O
 > `.gitignore` cobre as variações comuns, mas um `.mp4` que entra no histórico
 > do Git não sai mais sem reescrever o histórico.
@@ -650,13 +658,40 @@ o fallback que impede "erro desconhecido" quando o site muda a mensagem
 
 `baixando`, `concluido`, `falhou`, `interrompido`.
 
+Duas colunas acompanham o status:
+
+- **`ja_existia`** — o arquivo já estava no destino e o download foi pulado.
+  É sucesso, mas o usuário precisa saber que nada foi baixado (§9.3).
+- **`aviso`** — texto não-bloqueante, acumulado com ` | `. Usado quando o
+  arquivo já existia, quando o histórico não pôde ser atualizado, e quando um
+  `interrompido` tem arquivo no destino (§10.6).
+
 `baixando` é gravado **no início** do download. Sem essa linha, a reconciliação
 de §10.1 não teria o que marcar: um job morto no meio não deixaria rastro, e
 "marcar como interrompido" seria impossível. A fila tem mais estados (§10.2);
 o histórico registra o início e o desfecho.
 
-**Uma linha por chave**, representando a última tentativa (upsert). Rebaixar
-depois de uma falha substitui o registro anterior.
+**UMA LINHA POR TENTATIVA de download**, não por chave.
+
+A primeira versão tinha `UNIQUE (extractor, video_id, perfil)` e fazia upsert.
+Um smoke test com download real mostrou o resultado: depois de rebaixar com
+`forcar`, o disco tinha **3 arquivos e o histórico 2 registros** — o arquivo
+anterior ficou órfão, sem nenhuma linha apontando para ele. E um re-download
+que *falhasse* apagava o caminho de um arquivo que continuava no disco.
+
+Isso violava as duas promessas centrais do produto: footage não some em
+silêncio, e o histórico não mente sobre onde o arquivo está. Cada arquivo
+baixado tem agora a sua linha.
+
+Consequências:
+
+- `iniciar()` devolve o registro criado; `concluir()`, `falhar()`,
+  `registrar_destino()` e `avisar()` identificam a tentativa pelo **`id`**.
+- `ja_baixado()` devolve a tentativa **concluída mais recente** da tripla. Uma
+  falha posterior não apaga o arquivo que está no disco, então ele continua
+  sendo encontrado.
+- O histórico cresce com as tentativas. Para uso pessoal isso é aceitável, e é
+  exatamente o que "nunca some em silêncio" pede.
 
 O schema traz ainda `titulo_busca` (título normalizado: minúsculas, sem
 acento — o `LIKE` do SQLite só ignora caixa em ASCII) e `resolucao` (a
@@ -666,6 +701,24 @@ num fallback abaixo do que o perfil pedia).
 ---
 
 ## 10. Fila — schema e estados
+
+### 9.3 Destino já ocupado: sucesso com aviso
+
+O caminho de destino é resolvido contra colisão **na hora de baixar**
+(`resolver_colisao`), então normalmente ele não existe. Mas entre a resolução e
+a gravação há uma janela, e o arquivo pode aparecer.
+
+Nesse caso o yt-dlp, com `overwrites=False`, dispara `finished` sem baixar — e
+o job pareceria um download normal. O worker checa o destino antes e trata o
+caso explicitamente:
+
+- o job termina em **`concluido`**, não em falha: o footage está lá;
+- `ja_existia = true` e um **aviso** dizem que nada foi baixado;
+- o downloader **não é chamado**, e o arquivo existente não é tocado.
+
+---
+
+## 10. Fila
 
 ### 10.1 A fila é em memória, com reconciliação no histórico
 
@@ -740,6 +793,33 @@ do progress hook, o que deixa arquivos `.part` órfãos e estado ambíguo. Para 
 ferramenta de um usuário, esperar o download atual terminar é aceitável; estado
 corrompido não é.
 
+### 10.6 Avisos: o que não é falha mas precisa ser visto
+
+Três situações terminam bem, ou quase, e mesmo assim o usuário precisa saber.
+Todas viajam no campo `aviso` do job e do registro de histórico — nunca em log,
+que a interface não mostra.
+
+| Situação | O que acontece | O que o usuário vê |
+|---|---|---|
+| **Arquivo já existia** (§9.3) | Job `concluido`, `ja_existia: true` | "O arquivo já existia no destino; o download foi pulado" |
+| **Histórico indisponível** | Job com o estado certo na fila; a linha do histórico não foi atualizada | "O download terminou, mas o histórico não pôde ser atualizado" |
+| **Interrompido com arquivo no destino** | Na subida seguinte, o registro `interrompido` tem um arquivo no caminho pretendido | "Há um arquivo de N bytes; não é possível verificar se está completo" |
+
+O terceiro caso merece explicação. Um download que termina **depois** de
+`parar()` deixa o job `interrompido` e o arquivo no disco. Na subida seguinte,
+a reconciliação encontra os dois.
+
+Concluir automaticamente seria mentira: o arquivo pode estar truncado, e **não
+há como verificar** — o tamanho esperado nunca chegou a ser gravado, porque o
+`concluir()` não rodou. Baixar de novo em silêncio produziria uma duplicata
+" (2)" sem explicação.
+
+Então o produto **avisa e para**: mostra o arquivo, diz que não dá para
+garantir a integridade, e deixa a decisão com quem sabe o que fazer com
+footage. Para isso funcionar, o caminho pretendido é gravado no histórico
+**antes** do download (`registrar_destino`); sem ele, um `interrompido` não
+teria onde ser procurado.
+
 ---
 
 ## 11. API HTTP
@@ -812,6 +892,34 @@ Registradas para revisão.
 | 8 | `motivo_falha` **e** `mensagem_falha`, ambos | Enum para lógica, texto original como fallback |
 | 9 | Perfil com `,` no seletor é erro de config | Quebra a premissa de um arquivo por job |
 | 10 | Thumbnail não é baixada pelo backend | O navegador busca do CDN |
+
+### 13.1 Decisões da etapa 2 (revisão pós-smoke-test)
+
+Tomadas com o autor depois da primeira integração real, sob o princípio
+*footage nunca some em silêncio, e o histórico nunca mente sobre onde o arquivo
+está*.
+
+| # | Decisão | Onde |
+|---|---|---|
+| 1 | Destino já ocupado é **sucesso com aviso** (`ja_existia`), não falha | §9.3 |
+| 2 | `continuedl` **mantido** no padrão do yt-dlp | §13.2 |
+| 3 | Histórico passa a guardar **uma linha por tentativa** | §9.2 |
+| 4 | Falha ao gravar o desfecho vira **aviso visível**, nunca silêncio | §10.6 |
+| 5 | `interrompido` com arquivo no destino **avisa**, não conclui nem duplica | §10.6 |
+| 6 | A pasta do projeto **não é criada** na subida, só ao baixar | §7 |
+
+### 13.2 Dívida conhecida: `continuedl`
+
+O yt-dlp retoma um `.part` parcial por padrão, e o projeto **mantém** esse
+comportamento: reiniciar do zero custa banda, e o risco é teórico.
+
+O risco, registrado para quando fizer falta: se o site reencodar o stream entre
+a tentativa interrompida e a retomada, os bytes do `.part` antigo e os novos
+pertencem a codificações diferentes, e o arquivo resultante pode ficar
+corrompido sem nenhum erro.
+
+**Se aparecer um arquivo corrompido sem explicação, este é o primeiro
+suspeito.** O teste é simples: apagar o `.part` e baixar de novo do zero.
 
 ## 14. Decisões em aberto
 

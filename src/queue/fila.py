@@ -77,12 +77,33 @@ class Fila:
         with self._lock:
             self._jobs[job_id].transicionar(novo)
 
-    def concluir(self, job_id: str, caminho: str) -> None:
-        """Valida a transição ANTES de preencher o caminho: sem estado parcial."""
+    def concluir(self, job_id: str, caminho: str, *, ja_existia: bool = False) -> None:
+        """Valida a transição ANTES de preencher o caminho: sem estado parcial.
+
+        `ja_existia` marca que o arquivo já estava no destino e o download foi
+        pulado — é sucesso, mas a tela precisa mostrar que não baixou.
+        """
         with self._lock:
             job = self._jobs[job_id]
             job.transicionar(EstadoJob.CONCLUIDO)
             job.caminho_final = caminho
+            job.ja_existia = ja_existia
+
+    def avisar(self, job_id: str, texto: str) -> None:
+        """Acrescenta um aviso não-bloqueante ao job, sem mudar o estado.
+
+        NUNCA levanta: é chamado de caminhos de erro que não podem quebrar
+        (falha ao gravar no histórico, arquivo já existente). Acumula sem
+        duplicar — perder um aviso é o mesmo problema de perder um registro.
+        """
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return
+            partes = [p for p in (job.aviso or "").split(" | ") if p]
+            if texto not in partes:
+                partes.append(texto)
+            job.aviso = " | ".join(partes)
 
     def falhar(self, job_id: str, *, motivo: str, mensagem: str) -> None:
         with self._lock:
