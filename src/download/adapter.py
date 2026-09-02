@@ -88,15 +88,15 @@ class Downloader:
         # Footage nunca é sobrescrito (SPEC 8.4). O domínio resolve colisão
         # antes, mas entre a checagem e a gravação um arquivo pode aparecer;
         # com overwrites=False o yt-dlp recusa em vez de destruir.
-        # DECISAO-PENDENTE: se o arquivo já existir no destino, o yt-dlp dispara
-        # 'finished' sem baixar (RESEARCH 3.2) e o job parece bem-sucedido —
-        # tratar como sucesso, ou como falha com aviso?
+        # Se o arquivo já existir aqui, o yt-dlp dispara 'finished' sem baixar
+        # (RESEARCH 3.2). O worker checa o destino ANTES e trata o caso como
+        # sucesso com aviso (SPEC 9.3), então esta linha é a última defesa:
+        # nunca destruir footage.
         efetivas["overwrites"] = False
 
-        # DECISAO-PENDENTE: continuedl fica no padrão (retoma .part parcial).
-        # Reiniciar do zero custa banda; retomar tem risco teórico de misturar
-        # bytes se o site reencodar o stream entre tentativas. Mantido o
-        # padrão do yt-dlp, que é o comportamento testado em campo.
+        # continuedl fica no padrão do yt-dlp (retoma .part parcial), por
+        # decisão registrada no SPEC 13.2 como dívida conhecida: se aparecer
+        # arquivo corrompido sem explicação, é o primeiro suspeito.
 
         # O outtmpl chega como caminho LITERAL, já sanitizado pelo domínio. O
         # yt-dlp o trata como template: um "%(" no título viraria "NA"
