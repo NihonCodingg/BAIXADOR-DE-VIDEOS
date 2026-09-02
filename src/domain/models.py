@@ -73,6 +73,27 @@ def _inteiro_positivo(valor) -> int | None:
     return n if n > 0 else None
 
 
+def _inteiro_ou_zero(valor) -> int:
+    try:
+        return max(0, int(valor))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _inteiro_ou_none(valor) -> int | None:
+    try:
+        return int(valor)
+    except (TypeError, ValueError):
+        return None
+
+
+def _float_ou_none(valor) -> float | None:
+    try:
+        return float(valor)
+    except (TypeError, ValueError):
+        return None
+
+
 def _formato_de_dict(bruto: dict) -> Formato:
     """Converte UM formato do info_dict.
 
@@ -154,7 +175,14 @@ class Progresso:
 
     @property
     def percentual(self) -> float | None:
-        raise NotImplementedError("T5")
+        """0 a 100, ou None quando o total é desconhecido ou zero.
+
+        Trava em 100: total_bytes_estimate pode ficar abaixo do real, e uma
+        barra em 104% é pior que uma em 100%.
+        """
+        if not self.total or self.total <= 0:
+            return None
+        return min(100.0, self.baixados / self.total * 100.0)
 
     @classmethod
     def de_hook(cls, d: dict) -> "Progresso | None":
@@ -163,8 +191,32 @@ class Progresso:
         Toda chave é opcional (RESEARCH 3.2): só .get(), nunca [ ]. Devolve
         None para status 'error', desconhecido ou ausente — "check this first
         and ignore unknown values", diz a docstring do yt-dlp.
+
+        'finished' pode chegar sem nenhum 'downloading' antes e sem
+        downloaded_bytes (arquivo já existia): nesse caso baixados = total.
         """
-        raise NotImplementedError("T5")
+        if not isinstance(d, dict):
+            return None
+        status = d.get("status")
+        if status not in ("downloading", "finished"):
+            return None
+
+        baixados = _inteiro_ou_zero(d.get("downloaded_bytes"))
+        total = (_inteiro_positivo(d.get("total_bytes"))
+                 or _inteiro_positivo(d.get("total_bytes_estimate")))
+
+        if status == "finished":
+            if not baixados and total:
+                baixados = total
+            return cls(baixados=baixados, total=total or baixados or None,
+                       velocidade_bps=None, eta_s=0)
+
+        return cls(
+            baixados=baixados,
+            total=total,
+            velocidade_bps=_float_ou_none(d.get("speed")),
+            eta_s=_inteiro_ou_none(d.get("eta")),
+        )
 
 
 @dataclass

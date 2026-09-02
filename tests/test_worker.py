@@ -215,10 +215,20 @@ def test_resolucao_baixada_vai_para_o_historico(montar):
     assert concluir[4] == "1080x1920"
 
 
-def test_hook_que_levanta_nao_derruba_o_worker(montar):
-    """Um KeyError dentro do hook derruba o download do yt-dlp; o worker
-    ainda assim precisa registrar a falha e seguir para o próximo."""
-    dl = DownloaderRoteirizado(eventos=[{"status": "downloading", "speed": "lixo"}])
+def test_hook_que_levanta_nao_derruba_o_worker(montar, monkeypatch):
+    """Uma exceção dentro do hook derruba o download do yt-dlp (RESEARCH 3.2).
+
+    O hook do worker engole a PRÓPRIA falha: o download segue e conclui. A
+    versão anterior deste teste era vacuosa — usava speed="lixo", que o
+    de_hook já trata sem levantar, então o guard nunca era exercitado.
+    """
+    import src.queue.worker as worker_mod
+
+    def explode(cls, d):
+        raise RuntimeError("bug no parser do hook")
+
+    monkeypatch.setattr(worker_mod.Progresso, "de_hook", classmethod(explode))
+    dl = DownloaderRoteirizado(eventos=[{"status": "downloading", "downloaded_bytes": 1}])
     fila, w, hist = montar(dl)
     fila.adicionar(job())
     assert hist.terminou.wait(ESPERA)

@@ -156,6 +156,16 @@ def test_concluir_preenche_caminho_e_estado():
     assert j.estado is EstadoJob.CONCLUIDO and j.caminho_final == "D:/F/x.mp4"
 
 
+def test_concluir_ilegal_nao_preenche_o_caminho():
+    """Estado parcial: a transição é validada ANTES de gravar o caminho."""
+    f = Fila()
+    f.adicionar(job())
+    with pytest.raises(TransicaoIlegal):
+        f.concluir("j1", "D:/F/x.mp4")
+    j = f.obter("j1")
+    assert j.estado is EstadoJob.NA_FILA and j.caminho_final is None
+
+
 def test_falhar_preenche_motivo_e_mensagem():
     f = Fila()
     f.adicionar(job())
