@@ -273,7 +273,7 @@ No item de `/api/inspecionar`, `baixados` é um objeto **por perfil** com o que
 já foi concluído para aquele vídeo:
 
 ```json
-"baixados": {"edicao_1080": {"caminho": "...", "projeto": "pessoal", "resolucao": "1080x1920", "concluido_em": "..."}}
+{"baixados": {"edicao_1080": {"caminho": "...", "projeto": "pessoal", "resolucao": "1080x1920", "concluido_em": "..."}}}
 ```
 
 Vazio (`{}`) se nunca foi baixado. A tela usa isso para avisar **antes de
