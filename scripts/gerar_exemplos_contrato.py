@@ -167,6 +167,51 @@ def main():
             bloco("POST /api/fila — já baixado neste perfil (409)",
                   c.post("/api/fila", json={"urls": [URL_REAL], "perfil": "edicao_1080",
                                             "projeto": "pessoal"}))
+
+            # --- destino já ocupado: sucesso com aviso (SPEC 9.3) ---
+            # Na vida real este é uma corrida: o arquivo aparece entre a
+            # resolução de colisão e a gravação. Para o exemplo ser
+            # determinístico, desligamos a resolução de colisão só neste job —
+            # o JSON abaixo continua vindo de execução real do pipeline.
+            import src.pipeline as _pipe
+            _resolver_original = _pipe.resolver_colisao
+            _pipe.resolver_colisao = lambda caminho, existe: caminho
+            try:
+                r3 = c.post("/api/fila", json={"urls": [URL_REAL], "perfil": "edicao_1080",
+                                               "projeto": "pessoal", "forcar": True})
+                esperar(c, r3.json()["ids"][0], {"concluido", "falhou"})
+            finally:
+                _pipe.resolver_colisao = _resolver_original
+
+            bloco("GET /api/fila — job com `ja_existia`: o arquivo já estava no destino",
+                  c.get("/api/fila"))
+            bloco("GET /api/historico — uma linha por tentativa, com `aviso`",
+                  c.get("/api/historico"))
+        # --- reconciliação na subida: interrompido com arquivo no destino ---
+        # Simula o programa fechando no meio de um download: uma tentativa fica
+        # em `baixando` com o destino já gravado, e o arquivo parcial no disco.
+        from src.domain.models import Video
+        from src.storage.historico import Historico
+
+        parcial = footage / "pessoal" / "parcial-de-um-download-interrompido.mp4"
+        parcial.parent.mkdir(parents=True, exist_ok=True)
+        parcial.write_bytes(b"\0" * 3_145_728)
+
+        h = Historico(temp / "data" / "historico.db")
+        h.criar_schema()
+        reg = h.iniciar(Video.de_info_dict(INFO), perfil="edicao_4k",
+                        projeto="pessoal", url_original=URL_REAL)
+        h.registrar_destino(reg.id, str(parcial))
+        h.fechar()
+
+        pipeline2 = Pipeline(config, temp / "data", downloader=DownloaderDeExemplo(),
+                             detectar_ffmpeg=lambda: StatusFFmpeg(
+                                 ffmpeg="C:\\ffmpeg\\bin\\ffmpeg.exe",
+                                 ffprobe="C:\\ffmpeg\\bin\\ffprobe.exe"))
+        app2 = criar_app(pipeline2, pasta_web=RAIZ / "web")
+        with TestClient(app2, raise_server_exceptions=False) as c2:
+            bloco("GET /api/historico — na subida seguinte: `interrompido` com aviso",
+                  c2.get("/api/historico", params={"limite": 2}))
     finally:
         shutil.rmtree(temp, ignore_errors=True)
 

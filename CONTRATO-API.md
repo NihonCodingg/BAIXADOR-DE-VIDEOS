@@ -3,11 +3,15 @@
 Este documento descreve a API que a interface consome. Foi escrito para quem
 **não conhece o projeto** e vai desenhar a tela a partir daqui.
 
-Todos os exemplos de resposta foram **gerados por execução real** da API
-(`scripts/gerar_exemplos_contrato.py`), com os metadados de um vídeo real
-capturados em `spike_meta.json`. Só o download em si é simulado — o gerador não
-toca a rede —, então os números de progresso e tamanho são ilustrativos, mas a
-**forma** de cada resposta é exatamente a que a interface vai receber.
+Todos os exemplos de resposta (§10) foram **gerados por execução real** da API
+(`scripts/gerar_exemplos_contrato.py`), sobre os metadados de um vídeo real. O
+download em si é simulado — o gerador não toca a rede —, então os números de
+progresso e tamanho são ilustrativos, mas a **forma** de cada resposta é
+exatamente a que a interface vai receber. Nenhum exemplo foi editado à mão.
+
+O back-end foi validado com um download real de ponta a ponta antes desta
+versão: o arquivo saiu em 1080x1920 H.264 + AAC, o histórico registrou o
+caminho e a resolução corretos, e o conflito de duplicata disparou.
 
 ---
 
@@ -30,6 +34,14 @@ O fluxo de uso, na ordem em que a tela deve conduzir:
 
 Não há login, não há vários usuários, não há upload. A interface é uma página
 só.
+
+**Dois princípios governam o produto**, e a tela deve refletir os dois:
+
+> **Footage nunca some em silêncio.** Nenhum arquivo baixado fica sem registro,
+> nada é sobrescrito, e toda situação estranha vira um aviso visível.
+>
+> **O histórico nunca mente sobre onde o arquivo está.** Se o histórico diz que
+> um arquivo está num caminho, ele está lá.
 
 ## 2. Regras gerais da API
 
@@ -63,6 +75,9 @@ Códigos de status que a tela precisa tratar:
 | `DELETE` | `/api/fila/{id}` | Cancela um job que ainda não começou |
 | `GET` | `/api/historico` | O que já foi baixado, com busca e filtro |
 
+> **Não existe mais nenhum endpoint além destes seis.** O que a tela precisar e
+> não estiver aqui, veja §9 — em particular o botão "abrir pasta".
+
 ### 3.1 `GET /api/config`
 
 Sem parâmetros. Devolve três blocos:
@@ -78,6 +93,9 @@ Sem parâmetros. Devolve três blocos:
   usuário), `pasta` (o destino no disco), `valido` e `motivo` (se `false`,
   mostrar desabilitado com o motivo).
 
+A pasta de um projeto **pode ainda não existir** e mesmo assim ser válida: ela é
+criada no primeiro download. Não trate "pasta inexistente" como erro.
+
 ### 3.2 `POST /api/inspecionar`
 
 Corpo: `{"links": "texto colado, um link por linha"}`. Envie o conteúdo da
@@ -88,13 +106,14 @@ Resposta: `{"itens": [...]}`, **um item por link distinto**, na ordem colada.
 Cada item tem `ok`:
 
 - `ok: true` — traz `video` (metadados), `url` (a forma canônica do link),
-  `e_youtube`, `aviso` (ver §6) e `baixados` (ver §7).
+  `e_youtube`, `aviso` (ver §7) e `baixados` (ver §8).
 - `ok: false` — traz `erro` (mensagem para o usuário) e `motivo` (código, ver
-  §5). Um link ruim **não invalida os outros**: a tela mostra um cartão de erro
+  §6). Um link ruim **não invalida os outros**: a tela mostra um cartão de erro
   para ele e cartões normais para os demais.
 
 Esta chamada **espera a rede** (consulta o site de cada vídeo). Com dez links
-pode levar alguns segundos: mostrar estado de carregamento.
+pode levar alguns segundos: mostrar estado de carregamento. Chamadas repetidas
+para o mesmo link são instantâneas (a API tem cache na sessão).
 
 Dentro de `video`:
 
@@ -103,10 +122,10 @@ Dentro de `video`:
 | `id` | string | Identificador no site de origem |
 | `titulo` | string | Pode ter acento, emoji, ser longo |
 | `canal` | string ou `null` | |
-| `duracao_s` | inteiro ou `null` | **Segundos**. Ver §4 |
-| `thumbnail` | URL ou `null` | Imagem hospedada no site de origem; usar direto no `<img>`. Ver §4 |
+| `duracao_s` | inteiro ou `null` | **Segundos**. Ver §5 |
+| `thumbnail` | URL ou `null` | Imagem hospedada no site de origem; usar direto no `<img>`. Ver §5 |
 | `data_upload` | `"AAAAMMDD"` ou `null` | |
-| `qualidades` | lista de inteiros | Qualidades disponíveis, pela **menor dimensão** do vídeo. Ver §4 |
+| `qualidades` | lista de inteiros | Qualidades disponíveis, pela **menor dimensão**. Ver §5 |
 | `formatos[]` | lista | Todos os streams disponíveis. Detalhe técnico; a tela principal não precisa exibir |
 
 ### 3.3 `POST /api/fila`
@@ -120,9 +139,9 @@ Corpo:
 - `urls`: lista de links (os mesmos que foram inspecionados, ou não — a
   inspeção não é pré-requisito).
 - `perfil` e `projeto`: os `nome` vindos de `/api/config`.
-- `forcar`: opcional, padrão `false`. `true` baixa de novo um vídeo que já foi
-  concluído neste perfil (o arquivo antigo **não é sobrescrito**: o novo ganha
-  sufixo ` (2)`).
+- `forcar`: opcional, padrão `false`. `true` baixa de novo um vídeo já
+  concluído neste perfil. O arquivo antigo **nunca é sobrescrito**: o novo ganha
+  sufixo ` (2)`, e **os dois continuam no histórico**.
 
 Resposta: `{"ids": ["..."]}` — um id por job criado, na ordem das `urls`.
 
@@ -143,14 +162,15 @@ Campos de cada job:
 | Campo | Tipo | Nota |
 |---|---|---|
 | `id` | string | Para o `DELETE` |
-| `estado` | string | Um dos seis de §5 |
+| `estado` | string | Um dos seis de §6 |
 | `perfil`, `projeto` | string | Os `nome`s |
 | `criado_em` | ISO-8601 UTC | Ex.: `2026-09-02T18:48:58+00:00` |
 | `video` | objeto | `id`, `titulo`, `canal`, `duracao_s`, `thumbnail` |
-| `progresso` | objeto ou `null` | `null` antes de começar. Ver §4 |
+| `progresso` | objeto ou `null` | `null` antes de começar. Ver §5 |
 | `caminho_final` | string ou `null` | Preenchido só em `concluido` |
-| `motivo_falha`, `mensagem_falha` | string ou `null` | Preenchidos só em `falhou`. Ver §5 |
-| `aviso` | string ou `null` | Aviso não-bloqueante (ex.: pasta do projeto profunda demais, nome foi encurtado) |
+| **`ja_existia`** | booleano | `true` = o arquivo já estava no destino e **nada foi baixado**. Ver §7 |
+| **`aviso`** | string ou `null` | Aviso não-bloqueante. **Mostrar sempre que existir.** Ver §7 |
+| `motivo_falha`, `mensagem_falha` | string ou `null` | Preenchidos só em `falhou`. Ver §6 |
 
 ### 3.5 `DELETE /api/fila/{id}`
 
@@ -170,47 +190,89 @@ Parâmetros de query, todos opcionais:
 - `termo` — busca no título. **Ignora acento e maiúsculas**: `selecao` acha
   "Seleção".
 - `projeto` — filtra pelo `nome` do projeto.
-- `limite` — padrão 100, máximo 1000.
+- `limite` — padrão 100, entre 1 e 1000.
 
-Resposta: `{"registros": [...]}`, mais recente primeiro. Cada registro é uma
-linha do banco: `titulo`, `canal`, `duracao_s`, `perfil`, `projeto`, `caminho`
-(onde o arquivo está), `tamanho_bytes`, `resolucao` (a que **realmente** foi
-baixada, ex.: `1080x1920`), `status`, `motivo_falha`, `mensagem_falha`,
-`criado_em`, `concluido_em`.
+Resposta: `{"registros": [...]}`, mais recente primeiro.
 
-`status` no histórico é um de: `baixando`, `concluido`, `falhou`,
-`interrompido` (o programa fechou no meio).
+**Cada registro é uma tentativa de download, não um vídeo.** Baixar o mesmo
+vídeo duas vezes no mesmo perfil produz **duas linhas**, cada uma com o seu
+arquivo. Isso é deliberado: cada arquivo que existe no disco tem a sua linha, e
+uma tentativa que falha não apaga o registro do arquivo anterior.
+
+Consequência para a tela: **agrupar por vídeo ao exibir**, ou o usuário verá
+entradas repetidas. Sugestão: agrupar por `video_id` + `perfil`, mostrar a
+tentativa mais recente e permitir expandir as anteriores.
+
+Campos: `titulo`, `canal`, `duracao_s`, `perfil`, `projeto`, `caminho` (onde o
+arquivo está), `tamanho_bytes`, `resolucao` (a que **realmente** foi baixada,
+ex.: `1080x1920`), `status`, `ja_existia`, `aviso`, `motivo_falha`,
+`mensagem_falha`, `criado_em`, `concluido_em`.
+
+`status` no histórico: `baixando`, `concluido`, `falhou`, `interrompido`.
 
 ---
 
-## 4. Campos que a tela precisa formatar
+## 4. O que NÃO está implementado
+
+> ### ⛔ `POST /api/abrir-pasta` — NÃO EXISTE
+>
+> **Não desenhe um botão "abrir pasta" que abra a pasta.** O endpoint não
+> existe e não será implementado nesta versão.
+>
+> Um navegador não abre pastas do disco por conta própria; isso exigiria um
+> endpoint que peça ao sistema operacional. Ele está planejado para uma versão
+> futura, com esta forma:
+>
+> ```
+> POST /api/abrir-pasta   {"caminho": "..."}
+> → 200 {"aberto": true}  |  400 se o caminho não estiver num projeto configurado
+> ```
+>
+> **Enquanto isso, o botão deve COPIAR O CAMINHO** para a área de transferência
+> (`navigator.clipboard.writeText`), com um rótulo honesto: "Copiar caminho".
+> Desenhe-o assim, não como "Abrir pasta".
+
+Nada mais do que este documento descreve está pendente. Os seis endpoints de §3
+existem e funcionam.
+
+---
+
+## 5. Campos que a tela precisa formatar
 
 A API entrega valores **crus**. Não formata nada. Estes exigem tratamento:
 
 | Campo | Vem como | Mostrar como |
 |---|---|---|
-| `duracao_s` | segundos inteiros (`65`) | `1:05`. Acima de uma hora, `1:02:05`. `null` → `--:--` |
-| `tamanho_bytes` | bytes (`9437184`) | `9,0 MB`. `null` → `--` |
+| `duracao_s` | **segundos** inteiros (`65`) | `1:05`. Acima de uma hora, `1:02:05`. `null` → `--:--` |
+| `tamanho_bytes` | **bytes** (`11062598`) | `10,5 MB`. `null` → `--` |
 | `progresso.percentual` | float (`38.88888`) ou `null` | Arredondar: `39%`. `null` = total desconhecido → barra indeterminada |
-| `progresso.velocidade_bps` | bytes por segundo, float ou `null` | `3,1 MB/s`. `null` → `--` |
+| `progresso.velocidade_bps` | **bytes por segundo**, float ou `null` | `3,1 MB/s`. `null` → `--` |
 | `progresso.eta_s` | segundos ou `null` | `0:02`. `null` → `--` |
-| `fps` (em `formatos[]`) | float **fracionário** (`29.97`, `59.94`) | Uma casa decimal quando não for inteiro. **Nunca truncar** para inteiro |
+| `fps` (em `formatos[]`) | float **fracionário** (`29.97`, `59.94`) | Uma casa decimal quando não for inteiro. **Nunca truncar** para inteiro — `59.94` virar `59` é erro |
 | `thumbnail` | URL ou **`null`** | Se `null`, um placeholder. Nunca `<img>` quebrado |
-| `criado_em`, `concluido_em` | ISO-8601 em UTC | Converter para o fuso local |
+| `criado_em`, `concluido_em` | ISO-8601 em **UTC** | Converter para o fuso local |
 | `qualidades` | `[144, 240, ..., 1080]` | Ex.: `1080p`. É pela **menor dimensão**: um vídeo vertical 1080x1920 e um horizontal 1920x1080 mostram o mesmo `1080` |
 | `resolucao` | `"1080x1920"` | Pode exibir como está; vertical tem altura maior que largura |
-| `caminho`, `caminho_final`, `pasta` | string | Caminhos do Windows. Os que vêm do download usam `\` (`D:\FOOTAGE\pessoal\...`); os da configuração vêm como foram escritos, geralmente com `/`. Exibir como está; nunca editar |
+| `caminho`, `caminho_final`, `pasta` | string | Caminhos do Windows. Os que vêm do download usam `\`; os da configuração vêm como foram escritos, geralmente com `/`. Exibir como está; nunca editar |
 
-**`tem_audio` e `tem_video` (em `formatos[]`) — três estados.** Cada formato
-traz `vcodec` e `acodec`. O valor da string `"none"` significa "não tem";
-**`null` significa "desconhecido"**, não "não tem". Para não repetir essa
-lógica na tela, a API já entrega `tem_video` e `tem_audio` resolvidos como
-booleanos — use-os, e trate `acodec: null` apenas como "codec não informado"
-se for exibir o codec.
+### `tem_audio` e `tem_video` — três estados, não dois
+
+Cada item de `formatos[]` traz `vcodec` e `acodec`. Aqui há uma armadilha:
+
+- a string `"none"` significa **"não tem"**;
+- **`null` significa "desconhecido"**, não "não tem".
+
+No vídeo de exemplo, dois formatos têm `acodec: null` e **são** faixas de
+áudio — o site simplesmente não informou o codec. Tratar `null` como "sem
+áudio" os esconderia.
+
+Para a tela não repetir essa lógica, a API já entrega **`tem_video` e
+`tem_audio` resolvidos como booleanos**. Use-os. Só use `vcodec`/`acodec` se for
+exibir o nome do codec, e aí trate `null` como "não informado".
 
 ---
 
-## 5. Estados de um job e o que a tela mostra
+## 6. Estados de um job e o que a tela mostra
 
 ```
 na_fila ──> baixando ──> concluido
@@ -220,14 +282,16 @@ na_fila ──> baixando ──> concluido
    └──> cancelado                       (só antes de começar)
 ```
 
+São **seis** estados. `interrompido` só aparece no histórico.
+
 | Estado | O que mostrar | Cancelar? |
 |---|---|---|
 | `na_fila` | Posição na fila, sem barra | **Sim** |
 | `baixando` | Barra de progresso, velocidade, tempo restante | Não (botão desabilitado) |
-| `concluido` | Caminho do arquivo (`caminho_final`) e botão "abrir pasta" (ver §8) | Não |
+| `concluido` | Caminho do arquivo e botão "Copiar caminho" (§4). **Se `ja_existia` for `true`, um selo "já existia — não baixado"** | Não |
 | `falhou` | `mensagem_falha` em destaque; se `motivo_falha` for `rede` ou `rate_limit`, oferecer **tentar de novo** | Não |
 | `cancelado` | Discreto, pode colapsar | Não |
-| `interrompido` | Só aparece no **histórico**: "o programa fechou durante o download" | — |
+| `interrompido` | "O programa fechou durante o download". Se houver `aviso`, mostrá-lo — pode haver um arquivo parcial no disco (§7) | — |
 
 `motivo_falha` é um código estável para lógica; `mensagem_falha` é o texto
 para o usuário, já em português. Códigos possíveis:
@@ -252,22 +316,37 @@ canal/playlist — download em massa está fora do escopo).
 
 ---
 
-## 6. O aviso de "site que não é YouTube"
+## 7. Avisos: coisas que não são erro, mas precisam ser vistas
 
-A ferramenta conhece o YouTube: normaliza o link (remove parâmetros de
-rastreio, aceita `youtu.be`, `/shorts/`, etc.), evita duplicatas e casa com o
-histórico. Para **qualquer outro site**, o link passa como foi colado, e a
-deduplicação e o histórico só funcionam se o link for colado exatamente igual.
+O campo **`aviso`** existe no job (`/api/fila`), no registro de histórico e no
+item de `/api/inspecionar`. Quando não for `null`, **mostre**. Nunca esconda
+num log: é a única forma de o usuário saber.
 
-Onde aparece: no item de `/api/inspecionar`, campo **`aviso`** (string), com
-**`e_youtube: false`**. Para links do YouTube, `aviso` é `null`.
+Vários avisos no mesmo objeto vêm concatenados com ` | `.
 
-Como mostrar: um aviso **visível no cartão do vídeo**, não escondido. O texto
-vem pronto da API. Não bloqueia o enfileiramento.
+| Aviso | Quando aparece | O que a tela mostra |
+|---|---|---|
+| **Site que não é YouTube** | Item de `/api/inspecionar`, com `e_youtube: false` | Aviso no cartão do vídeo. Não bloqueia nada. Ver abaixo |
+| **Arquivo já existia** | Job/registro `concluido` com `ja_existia: true` | Selo no card: "já existia no destino — nada foi baixado" |
+| **Histórico não atualizado** | Job terminado cujo registro não pôde ser gravado | Aviso no card: o download terminou, mas o histórico ficou desatualizado |
+| **Interrompido com arquivo no destino** | Registro `interrompido` na subida seguinte | Aviso no histórico: há um arquivo de N bytes, e **não dá para garantir que está completo** |
+
+**Sobre o aviso de site não-YouTube.** A ferramenta conhece o YouTube:
+normaliza o link (remove parâmetros de rastreio, aceita `youtu.be`, `/shorts/`),
+evita duplicatas e casa com o histórico. Para qualquer outro site o link passa
+como foi colado, e a deduplicação só funciona se ele for colado exatamente
+igual. O texto vem pronto da API.
+
+**Sobre o aviso de interrompido.** Se o programa fechou durante um download,
+pode haver um arquivo parcial no destino. A ferramenta **não conclui
+automaticamente** (o arquivo pode estar truncado, e não há como verificar) e
+**não baixa uma duplicata em silêncio**. Ela avisa e deixa a decisão com o
+usuário. A tela deve tornar isso acionável: mostrar o aviso e oferecer "baixar
+de novo" (que usa `forcar: true`).
 
 ---
 
-## 7. Duplicatas: `baixados` e `forcar`
+## 8. Duplicatas: `baixados` e `forcar`
 
 No item de `/api/inspecionar`, `baixados` é um objeto **por perfil** com o que
 já foi concluído para aquele vídeo:
@@ -278,32 +357,36 @@ já foi concluído para aquele vídeo:
 
 Vazio (`{}`) se nunca foi baixado. A tela usa isso para avisar **antes de
 enfileirar**: se o perfil selecionado está em `baixados`, mostrar "já baixado
-em <caminho>" e oferecer "baixar de novo". Se o usuário insistir, enviar
+em &lt;caminho&gt;" e oferecer "baixar de novo". Se o usuário insistir, enviar
 `forcar: true` em `/api/fila`; sem isso a API responde 409.
 
 ---
 
-## 8. Botão "abrir pasta" — pendente na API
+## 9. Resumo para quem vai desenhar
 
-O produto prevê um botão "abrir pasta" no histórico e no job concluído. Um
-navegador não abre pastas do disco por conta própria; isso exige um endpoint
-que peça ao sistema operacional. **Ele ainda não existe.** A forma planejada:
+Quatro áreas na página:
 
-```
-POST /api/abrir-pasta   {"caminho": "<caminho_final ou caminho do histórico>"}
-→ 200 {"aberto": true}  |  400 se o caminho não estiver dentro de um projeto configurado
-```
+1. **Entrada** — textarea de links, seletor de perfil, seletor de projeto,
+   botão de inspecionar. Aviso fixo no topo se o ffmpeg faltar.
+2. **Prévia** — um card por link: thumbnail (pode faltar), título, canal,
+   duração formatada, qualidades. Cards de erro para links inválidos. Avisos
+   de site não-YouTube e de "já baixado" aparecem aqui.
+3. **Fila** — um card por job, com barra de progresso, velocidade e tempo
+   restante. Botão de cancelar habilitado só em `na_fila`. Selo de `ja_existia`
+   e avisos quando houver. Atualiza a cada segundo.
+4. **Histórico** — busca por texto e filtro por projeto. Agrupar por vídeo, já
+   que cada tentativa é uma linha. Botão "Copiar caminho" (**não** "abrir
+   pasta", §4).
 
-Enquanto não existir, o botão deve **copiar o caminho** para a área de
-transferência. Desenhe o botão; a integração decide o comportamento.
+O que **não** desenhar: login, upload, seleção de formato avulso (os perfis
+cobrem isso), botão de cancelar download em andamento, botão que abre pasta.
 
 ---
 
-## 9. Exemplos reais
+## 10. Exemplos reais
 
 Gerados por `python scripts/gerar_exemplos_contrato.py`. Vídeo real: um Short
-vertical de 65 segundos, com 41 formatos (45 do site menos 4 storyboards).
-Listas de `formatos` truncadas em 3 itens.
+vertical de 65 segundos. Listas de `formatos` truncadas em 3 itens para caber.
 
 ### GET /api/config
 
@@ -487,7 +570,7 @@ Listas de `formatos` truncadas em 3 itens.
 ```json
 {
   "ids": [
-    "bbfb01ebf24c448b815c99bfd388e670"
+    "892fcbe52ec14370950006cf059e7b7c"
   ]
 }
 ```
@@ -500,11 +583,12 @@ Listas de `formatos` truncadas em 3 itens.
 {
   "jobs": [
     {
-      "id": "bbfb01ebf24c448b815c99bfd388e670",
+      "id": "892fcbe52ec14370950006cf059e7b7c",
       "estado": "baixando",
+      "ja_existia": false,
       "perfil": "edicao_1080",
       "projeto": "pessoal",
-      "criado_em": "2026-09-02T18:55:47+00:00",
+      "criado_em": "2026-09-02T19:53:58+00:00",
       "video": {
         "id": "LzS8kB6lIm0",
         "titulo": "Camisa azul da Seleção: críticas ao design e lembrança histórica",
@@ -629,11 +713,12 @@ Listas de `formatos` truncadas em 3 itens.
 {
   "jobs": [
     {
-      "id": "bbfb01ebf24c448b815c99bfd388e670",
+      "id": "892fcbe52ec14370950006cf059e7b7c",
       "estado": "concluido",
+      "ja_existia": false,
       "perfil": "edicao_1080",
       "projeto": "pessoal",
-      "criado_em": "2026-09-02T18:55:47+00:00",
+      "criado_em": "2026-09-02T19:53:58+00:00",
       "video": {
         "id": "LzS8kB6lIm0",
         "titulo": "Camisa azul da Seleção: críticas ao design e lembrança histórica",
@@ -654,11 +739,12 @@ Listas de `formatos` truncadas em 3 itens.
       "aviso": null
     },
     {
-      "id": "aecac92461fd496bab33a3db2b082522",
+      "id": "41d3ce4ae31947b998dd2040e0152cba",
       "estado": "cancelado",
+      "ja_existia": false,
       "perfil": "so_audio",
       "projeto": "pessoal",
-      "criado_em": "2026-09-02T18:55:47+00:00",
+      "criado_em": "2026-09-02T19:53:58+00:00",
       "video": {
         "id": "LzS8kB6lIm0",
         "titulo": "Camisa azul da Seleção: críticas ao design e lembrança histórica",
@@ -698,10 +784,12 @@ Listas de `formatos` truncadas em 3 itens.
       "tamanho_bytes": 9437184,
       "resolucao": "1080x1920",
       "status": "concluido",
+      "ja_existia": false,
+      "aviso": null,
       "motivo_falha": null,
       "mensagem_falha": null,
-      "criado_em": "2026-09-02T18:55:47+00:00",
-      "concluido_em": "2026-09-02T18:55:47+00:00"
+      "criado_em": "2026-09-02T19:53:58+00:00",
+      "concluido_em": "2026-09-02T19:53:58+00:00"
     }
   ]
 }
@@ -729,10 +817,12 @@ Listas de `formatos` truncadas em 3 itens.
       "tamanho_bytes": 9437184,
       "resolucao": "1080x1920",
       "status": "concluido",
+      "ja_existia": false,
+      "aviso": null,
       "motivo_falha": null,
       "mensagem_falha": null,
-      "criado_em": "2026-09-02T18:55:47+00:00",
-      "concluido_em": "2026-09-02T18:55:47+00:00"
+      "criado_em": "2026-09-02T19:53:58+00:00",
+      "concluido_em": "2026-09-02T19:53:58+00:00"
     }
   ]
 }
@@ -820,7 +910,7 @@ Listas de `formatos` truncadas em 3 itens.
           "caminho": "D:\\FOOTAGE\\pessoal\\20260901 - Camisa azul da Seleção críticas ao design e lembrança histórica [LzS8kB6lIm0].mp4",
           "projeto": "pessoal",
           "resolucao": "1080x1920",
-          "concluido_em": "2026-09-02T18:55:47+00:00"
+          "concluido_em": "2026-09-02T19:53:58+00:00"
         }
       }
     }
@@ -837,3 +927,191 @@ Listas de `formatos` truncadas em 3 itens.
   "erro": "Já baixado no perfil 'edicao_1080': D:\\FOOTAGE\\pessoal\\20260901 - Camisa azul da Seleção críticas ao design e lembrança histórica [LzS8kB6lIm0].mp4. Use forcar=true para baixar de novo."
 }
 ```
+
+### GET /api/fila — job com `ja_existia`: o arquivo já estava no destino
+
+`200`
+
+```json
+{
+  "jobs": [
+    {
+      "id": "892fcbe52ec14370950006cf059e7b7c",
+      "estado": "concluido",
+      "ja_existia": false,
+      "perfil": "edicao_1080",
+      "projeto": "pessoal",
+      "criado_em": "2026-09-02T19:53:58+00:00",
+      "video": {
+        "id": "LzS8kB6lIm0",
+        "titulo": "Camisa azul da Seleção: críticas ao design e lembrança histórica",
+        "canal": "Canal Michuruca",
+        "duracao_s": 65,
+        "thumbnail": "https://i.ytimg.com/vi/LzS8kB6lIm0/maxresdefault.jpg"
+      },
+      "progresso": {
+        "baixados": 9437184,
+        "total": 9437184,
+        "percentual": 100.0,
+        "velocidade_bps": null,
+        "eta_s": 0
+      },
+      "caminho_final": "D:\\FOOTAGE\\pessoal\\20260901 - Camisa azul da Seleção críticas ao design e lembrança histórica [LzS8kB6lIm0].mp4",
+      "motivo_falha": null,
+      "mensagem_falha": null,
+      "aviso": null
+    },
+    {
+      "id": "41d3ce4ae31947b998dd2040e0152cba",
+      "estado": "cancelado",
+      "ja_existia": false,
+      "perfil": "so_audio",
+      "projeto": "pessoal",
+      "criado_em": "2026-09-02T19:53:58+00:00",
+      "video": {
+        "id": "LzS8kB6lIm0",
+        "titulo": "Camisa azul da Seleção: críticas ao design e lembrança histórica",
+        "canal": "Canal Michuruca",
+        "duracao_s": 65,
+        "thumbnail": "https://i.ytimg.com/vi/LzS8kB6lIm0/maxresdefault.jpg"
+      },
+      "progresso": null,
+      "caminho_final": null,
+      "motivo_falha": null,
+      "mensagem_falha": null,
+      "aviso": null
+    },
+    {
+      "id": "048ed2a40d374e868466d62e5bfa3e42",
+      "estado": "concluido",
+      "ja_existia": true,
+      "perfil": "edicao_1080",
+      "projeto": "pessoal",
+      "criado_em": "2026-09-02T19:53:58+00:00",
+      "video": {
+        "id": "LzS8kB6lIm0",
+        "titulo": "Camisa azul da Seleção: críticas ao design e lembrança histórica",
+        "canal": "Canal Michuruca",
+        "duracao_s": 65,
+        "thumbnail": "https://i.ytimg.com/vi/LzS8kB6lIm0/maxresdefault.jpg"
+      },
+      "progresso": null,
+      "caminho_final": "D:/FOOTAGE/pessoal/20260901 - Camisa azul da Seleção críticas ao design e lembrança histórica [LzS8kB6lIm0].mp4",
+      "motivo_falha": null,
+      "mensagem_falha": null,
+      "aviso": "O arquivo já existia no destino; o download foi pulado e nada foi sobrescrito."
+    }
+  ]
+}
+```
+
+### GET /api/historico — uma linha por tentativa, com `aviso`
+
+`200`
+
+```json
+{
+  "registros": [
+    {
+      "id": 2,
+      "extractor": "Youtube",
+      "video_id": "LzS8kB6lIm0",
+      "perfil": "edicao_1080",
+      "url_original": "https://youtube.com/shorts/LzS8kB6lIm0?si=0RP8BxS-q-XGH4Dw",
+      "url_canonica": "https://www.youtube.com/watch?v=LzS8kB6lIm0",
+      "titulo": "Camisa azul da Seleção: críticas ao design e lembrança histórica",
+      "canal": "Canal Michuruca",
+      "duracao_s": 65,
+      "projeto": "pessoal",
+      "caminho": "D:/FOOTAGE/pessoal/20260901 - Camisa azul da Seleção críticas ao design e lembrança histórica [LzS8kB6lIm0].mp4",
+      "tamanho_bytes": 9437184,
+      "resolucao": null,
+      "status": "concluido",
+      "ja_existia": true,
+      "aviso": "O arquivo já existia no destino; o download foi pulado e nada foi sobrescrito.",
+      "motivo_falha": null,
+      "mensagem_falha": null,
+      "criado_em": "2026-09-02T19:53:58+00:00",
+      "concluido_em": "2026-09-02T19:53:58+00:00"
+    },
+    {
+      "id": 1,
+      "extractor": "Youtube",
+      "video_id": "LzS8kB6lIm0",
+      "perfil": "edicao_1080",
+      "url_original": "https://youtube.com/shorts/LzS8kB6lIm0?si=0RP8BxS-q-XGH4Dw",
+      "url_canonica": "https://www.youtube.com/watch?v=LzS8kB6lIm0",
+      "titulo": "Camisa azul da Seleção: críticas ao design e lembrança histórica",
+      "canal": "Canal Michuruca",
+      "duracao_s": 65,
+      "projeto": "pessoal",
+      "caminho": "D:\\FOOTAGE\\pessoal\\20260901 - Camisa azul da Seleção críticas ao design e lembrança histórica [LzS8kB6lIm0].mp4",
+      "tamanho_bytes": 9437184,
+      "resolucao": "1080x1920",
+      "status": "concluido",
+      "ja_existia": false,
+      "aviso": null,
+      "motivo_falha": null,
+      "mensagem_falha": null,
+      "criado_em": "2026-09-02T19:53:58+00:00",
+      "concluido_em": "2026-09-02T19:53:58+00:00"
+    }
+  ]
+}
+```
+
+### GET /api/historico — na subida seguinte: `interrompido` com aviso
+
+`200`
+
+```json
+{
+  "registros": [
+    {
+      "id": 3,
+      "extractor": "Youtube",
+      "video_id": "LzS8kB6lIm0",
+      "perfil": "edicao_4k",
+      "url_original": "https://youtube.com/shorts/LzS8kB6lIm0?si=0RP8BxS-q-XGH4Dw",
+      "url_canonica": "https://www.youtube.com/watch?v=LzS8kB6lIm0",
+      "titulo": "Camisa azul da Seleção: críticas ao design e lembrança histórica",
+      "canal": "Canal Michuruca",
+      "duracao_s": 65,
+      "projeto": "pessoal",
+      "caminho": "D:\\FOOTAGE\\pessoal\\parcial-de-um-download-interrompido.mp4",
+      "tamanho_bytes": null,
+      "resolucao": null,
+      "status": "interrompido",
+      "ja_existia": false,
+      "aviso": "O download foi interrompido, mas há um arquivo de 3145728 bytes em D:\\FOOTAGE\\pessoal\\parcial-de-um-download-interrompido.mp4. Não é possível verificar se está completo — confira antes de usar, ou baixe de novo com forcar.",
+      "motivo_falha": null,
+      "mensagem_falha": null,
+      "criado_em": "2026-09-02T19:53:58+00:00",
+      "concluido_em": "2026-09-02T19:53:59+00:00"
+    },
+    {
+      "id": 2,
+      "extractor": "Youtube",
+      "video_id": "LzS8kB6lIm0",
+      "perfil": "edicao_1080",
+      "url_original": "https://youtube.com/shorts/LzS8kB6lIm0?si=0RP8BxS-q-XGH4Dw",
+      "url_canonica": "https://www.youtube.com/watch?v=LzS8kB6lIm0",
+      "titulo": "Camisa azul da Seleção: críticas ao design e lembrança histórica",
+      "canal": "Canal Michuruca",
+      "duracao_s": 65,
+      "projeto": "pessoal",
+      "caminho": "D:/FOOTAGE/pessoal/20260901 - Camisa azul da Seleção críticas ao design e lembrança histórica [LzS8kB6lIm0].mp4",
+      "tamanho_bytes": 9437184,
+      "resolucao": null,
+      "status": "concluido",
+      "ja_existia": true,
+      "aviso": "O arquivo já existia no destino; o download foi pulado e nada foi sobrescrito.",
+      "motivo_falha": null,
+      "mensagem_falha": null,
+      "criado_em": "2026-09-02T19:53:58+00:00",
+      "concluido_em": "2026-09-02T19:53:58+00:00"
+    }
+  ]
+}
+```
+
