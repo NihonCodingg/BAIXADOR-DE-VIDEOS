@@ -155,22 +155,36 @@ parte do objetivo de aprendizado deste projeto.
 **O remoto nunca fica quebrado.** Se a implementação não terminar na sessão, o
 commit vermelho fica local e não sobe.
 
-Fora de ciclo TDD, vale a regra geral acima: commit + push ao concluir.
-- Formato da mensagem: prefixo do ticket, dois pontos, descrição objetiva em
-  português.
+### Formato da mensagem
 
-  Exemplos:
+Prefixo do ticket, dois pontos, descrição objetiva em português.
 
-  ```
-  T3: sanitização de nomes de arquivo para Windows
-  T3: testes de borda (caractere proibido, nome longo, título vazio)
-  T5: worker da fila com um download por vez
-  ```
+```
+T3: sanitização de nomes de arquivo para Windows
+T3: testes de borda (caractere proibido, nome longo, título vazio)
+T5: worker da fila com um download por vez
+```
 
-- Sem emoji nas mensagens. Sem "update", "wip" ou "ajustes".
-- Antes de todo commit: rodar `git status` e mostrar ao autor a lista do que
-  será commitado. Esperar aprovação explícita.
-- Antes de todo commit: confirmar que nenhum vídeo, banco de dados, `.env` ou
-  arquivo binário está na lista.
-- Nunca usar `git push --force`. Nunca reescrever histórico.
-- Nunca criar commit vazio ou commit sem mudança real de conteúdo.
+Sem emoji. Sem "update", "wip" ou "ajustes".
+
+### Antes de TODO commit
+
+1. Rodar `git status` e mostrar ao autor a lista do que será commitado.
+   Esperar aprovação explícita.
+2. Confirmar que nenhum vídeo, banco de dados, `.env` ou arquivo binário está
+   na lista.
+
+### Antes de TODO push
+
+**Rodar a suíte e conferir que está verde.** Não presumir pelo que foi feito na
+última hora: rodar e ler a saída.
+
+Isso vale mesmo quando o commit é só de documentação. Se a suíte estiver
+vermelha por testes ainda não implementados, verificar que eles estão fora do
+que será enviado — e dizer isso explicitamente, em vez de empurrar e torcer.
+
+### Nunca
+
+- `git push --force`
+- Reescrever histórico
+- Commit vazio ou sem mudança real de conteúdo
