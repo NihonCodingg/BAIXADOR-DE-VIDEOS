@@ -188,15 +188,32 @@ def test_o_teste_esta_realmente_olhando_arquivos():
     assert arquivos_python("web"), "Nenhum arquivo encontrado em src/web/"
 
 
+@pytest.mark.parametrize("pacote", ["domain", "download", "storage", "queue", "web"])
+def test_todo_pacote_de_src_esta_presente(pacote):
+    """Cada camada do SPEC 4.1 existe e tem código.
+
+    Nasceu de um incidente: o .gitignore tinha "download/" sem barra inicial,
+    que casa em qualquer profundidade, e src/download/ ficou fora do remoto
+    por semanas sem nenhum teste reclamar. Um clone limpo passava na suíte
+    com o adapter inteiro ausente.
+    """
+    arquivos = arquivos_python(pacote)
+    assert arquivos, f"src/{pacote}/ não existe ou está vazio"
+    assert any(a.name != "__init__.py" for a in arquivos), \
+        f"src/{pacote}/ só tem __init__.py"
+
+
 def test_resolucao_de_import_relativo():
     """O resolvedor de import relativo funciona.
 
     É a parte mais fácil de errar em silêncio: se ele resolvesse errado, um
     `from ..domain import x` passaria despercebido e a REGRA 2 não valeria nada.
+
+    Sem skip: se o arquivo sumir, o teste tem que FALHAR. Um skip aqui foi o
+    que deixou src/download/ ausente do remoto passar despercebido.
     """
     arquivo = SRC / "download" / "traducao_erros.py"
-    if not arquivo.exists():
-        pytest.skip("traducao_erros.py ainda não existe")
+    assert arquivo.exists(), "src/download/traducao_erros.py sumiu"
 
     importados = imports_de(arquivo)
     assert "src.domain.erros" in importados, (
