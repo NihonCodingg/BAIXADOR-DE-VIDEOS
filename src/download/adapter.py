@@ -121,3 +121,12 @@ class Downloader:
                 "o yt-dlp concluiu sem informar o caminho do arquivo baixado",
             ))
         return str(caminho)
+
+
+def validar_seletor(seletor: str) -> None:
+    """Levanta se a sintaxe do seletor de formato for inválida. Offline.
+
+    É o `validar_seletor` injetado em carregar_perfis(): o domínio não pode
+    importar yt_dlp (REGRA 1), então a checagem mora aqui.
+    """
+    raise NotImplementedError("T6")
