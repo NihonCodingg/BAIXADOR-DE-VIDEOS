@@ -936,6 +936,60 @@ para criar um Tk dentro de uma thread do servidor.
 
 ---
 
+## 12c. Cookies do navegador e o bloqueio antibot
+
+### 12c.1 O erro
+
+O YouTube responde `Sign in to confirm you're not a bot` quando desconfia do
+tráfego. Ele caía em `desconhecido`, e a tela despejava o texto em inglês do
+yt-dlp. Virou motivo próprio: `bloqueio_bot`, com mensagem em português que
+diz o que fazer.
+
+A substring da tabela é `not a bot`, sem apóstrofo: o texto real usa U+2019
+(`you’re`), e comparar com o apóstrofo ASCII não casa.
+
+O bloqueio é **intermitente**. Medido em 03/09/2026: o mesmo link que falhou
+passou minutos depois, sem cookies e sem trocar de versão do yt-dlp. Não é
+regressão do yt-dlp nem falta de atualização.
+
+### 12c.2 Atualizar o yt-dlp não resolve
+
+Verificado antes de implementar: a versão instalada (2026.08.19) já era a
+mais nova do PyPI. Ao contrário do HTTP 403 do spike, este erro não é
+resolvido por atualização — é decisão do site sobre a requisição.
+
+### 12c.3 Cookies do navegador, desligados por padrão
+
+`config/cookies.yaml` guarda `navegador` e `perfil`, e a tela edita em
+Ajustes. Desligado por padrão: ler o banco de cookies do navegador é
+intrusivo e a maioria dos downloads não precisa.
+
+A lista de navegadores aceitos vem de `yt_dlp.cookies.SUPPORTED_BROWSERS`, do
+yt-dlp instalado — não de uma cópia nossa, que desatualizaria em silêncio.
+
+### 12c.4 A leitura é testada na hora de ligar
+
+`load_cookies` do yt-dlp (cookies.py:113) embrulha **toda** exceção em
+`CookieLoadError('failed to load cookies')` e descarta a original. Pelo
+caminho normal, portanto, a causa é irrecuperável.
+
+Por isso ligar os cookies chama o extrator DIRETO antes de gravar: a causa
+real aparece na hora de escolher, e uma opção que só falharia no meio do
+próximo download não chega a ser gravada.
+
+### 12c.5 As três armadilhas do Windows, medidas
+
+| Detalhe do yt-dlp | Causa | Contorno |
+|---|---|---|
+| `could not find <nav> cookies database` | Navegador não instalado ou sem perfil | Escolher outro |
+| `Could not copy Chrome cookie database` | Navegador **aberto** travando o arquivo | Fechar o navegador |
+| `Failed to decrypt with DPAPI` | App-Bound Encryption do Chrome 127+ | **Nenhum** pela ferramenta |
+
+O terceiro é o pior: falha mesmo com o navegador fechado. Nesta máquina, em
+03/09/2026, o Edge cai exatamente nele. O Firefox não tem nenhum dos três.
+
+---
+
 ## 13. Decisões tomadas sem consulta
 
 Registradas para revisão.

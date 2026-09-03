@@ -78,6 +78,10 @@ download.**
 - **Relatório de falha legível**, em português, com o motivo real — vídeo
   privado, bloqueio regional, restrição de idade, falha de rede — em vez de
   stack trace.
+- **Cookies do navegador**, opcionais e desligados por padrão, para quando o
+  YouTube pedir confirmação de que você não é um robô. Ligados em Ajustes, na
+  própria tela. No Windows, feche o navegador antes: com Chrome e derivados
+  abertos o arquivo de cookies fica travado.
 
 ## Escopo de uso
 

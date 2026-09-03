@@ -79,8 +79,9 @@ Códigos de status que a tela precisa tratar:
 | `POST` | `/api/projetos` | Cadastra um projeto novo |
 | `DELETE` | `/api/projetos/{nome}` | Remove um projeto |
 | `POST` | `/api/escolher-pasta` | Abre o seletor NATIVO de pasta do sistema |
+| `POST` | `/api/cookies` | Liga ou desliga os cookies do navegador |
 
-> **Não existe mais nenhum endpoint além destes onze.** O que a tela precisar
+> **Não existe mais nenhum endpoint além destes doze.** O que a tela precisar
 > e não estiver aqui não existe.
 
 ### 3.1 `GET /api/config`
@@ -97,6 +98,9 @@ Sem parâmetros. Devolve três blocos:
 - `projetos[]` — `nome` (identificador a enviar), `rotulo` (texto para o
   usuário), `pasta` (o destino no disco), `valido` e `motivo` (se `false`,
   mostrar desabilitado com o motivo).
+- `cookies` — `navegador` e `perfil` configurados, `ativo`, `motivo` (por que
+  está desligado, se houver) e `navegadores[]` (a lista aceita, vinda do
+  yt-dlp instalado). Ver §3.10.
 
 A pasta de um projeto **pode ainda não existir** e mesmo assim ser válida: ela é
 criada no primeiro download. Não trate "pasta inexistente" como erro.
@@ -311,11 +315,40 @@ esquecido aberto penduraria a requisição.
 `400` quando o seletor não pôde abrir ou passou do tempo — a tela deve
 continuar aceitando o caminho digitado ou colado.
 
+### 3.10 `POST /api/cookies`
+
+Corpo: `{"navegador": "firefox", "perfil": "default"}`. `navegador` nulo ou
+vazio **desliga**; `perfil` é opcional. Resposta: `200 {"cookies": {...}}`,
+no mesmo formato do bloco de `/api/config`.
+
+Serve ao motivo de falha `bloqueio_bot` (§6): quando o YouTube pede
+confirmação de que você não é um robô, a saída é usar os cookies da sessão
+já aberta no navegador.
+
+**Desligado por padrão** — ler o banco de cookies do navegador é intrusivo, e
+a maioria dos downloads não precisa.
+
+`400`, com o detalhe do yt-dlp junto, quando:
+
+- o navegador não está na lista de `navegadores[]`;
+- **os cookies não puderam ser lidos agora**. A leitura é testada na hora de
+  ligar, não no meio do próximo download. Isso é deliberado: no caminho
+  normal o yt-dlp embrulha toda falha de cookie em `failed to load cookies` e
+  **descarta a causa**. Chamando o extrator direto, a causa sobrevive.
+
+Causas reais medidas no Windows, yt-dlp 2026.08.19:
+
+| Detalhe | O que é |
+|---|---|
+| `could not find <navegador> cookies database` | O navegador não está instalado, ou nunca criou perfil |
+| `Could not copy Chrome cookie database` | O navegador está **aberto** e travou o arquivo. Feche e tente de novo |
+| `Failed to decrypt with DPAPI` | App-Bound Encryption do Chrome 127+. Falha **mesmo com o navegador fechado**; não há contorno pela ferramenta |
+
 ---
 
 ## 4. O que NÃO está implementado
 
-Nada. Os onze endpoints de §3 existem e funcionam.
+Nada. Os doze endpoints de §3 existem e funcionam.
 
 > `POST /api/abrir-pasta` esteve nesta seção como "não existe" até o T8, e a
 > tela usava só "Copiar caminho" no lugar. Hoje os dois botões convivem:
@@ -394,6 +427,8 @@ para o usuário, já em português. Códigos possíveis:
 | `site_nao_suportado` | O site não é suportado | Não |
 | `rede` | Falha de rede | **Sim** |
 | `rate_limit` | O site limitou as requisições | **Sim**, depois de esperar |
+| `bloqueio_bot` | O YouTube pediu confirmação de que não é um robô | Não sozinho — ligar os cookies em §3.10. O bloqueio é intermitente, então às vezes o mesmo link passa minutos depois |
+| `cookies` | Os cookies do navegador configurado não puderam ser lidos | Não — corrigir ou desligar em §3.10 |
 | `sem_ffmpeg` | ffmpeg ausente | Não (instalar) |
 | `disco` | Falha ao gravar | Não |
 | `desconhecido` | Não classificado; `mensagem_falha` traz o texto original do erro | — |
@@ -539,7 +574,24 @@ vertical de 65 segundos. Listas de `formatos` truncadas em 3 itens para caber.
       "valido": true,
       "motivo": null
     }
-  ]
+  ],
+  "cookies": {
+    "navegador": null,
+    "perfil": null,
+    "ativo": false,
+    "motivo": null,
+    "navegadores": [
+      "brave",
+      "chrome",
+      "chromium",
+      "edge",
+      "firefox",
+      "opera",
+      "safari",
+      "vivaldi",
+      "whale"
+    ]
+  }
 }
 ```
 
@@ -660,7 +712,7 @@ vertical de 65 segundos. Listas de `formatos` truncadas em 3 itens para caber.
 ```json
 {
   "ids": [
-    "b7ee0b11ddfc450ead7db71518a1f935"
+    "4c55288b05694ef89508b81fea937e7c"
   ]
 }
 ```
@@ -673,13 +725,13 @@ vertical de 65 segundos. Listas de `formatos` truncadas em 3 itens para caber.
 {
   "jobs": [
     {
-      "id": "b7ee0b11ddfc450ead7db71518a1f935",
+      "id": "4c55288b05694ef89508b81fea937e7c",
       "estado": "baixando",
       "ja_existia": false,
       "url": "https://youtube.com/shorts/LzS8kB6lIm0?si=0RP8BxS-q-XGH4Dw",
       "perfil": "edicao_1080",
       "projeto": "pessoal",
-      "criado_em": "2026-09-03T02:56:38+00:00",
+      "criado_em": "2026-09-03T03:41:10+00:00",
       "video": {
         "id": "LzS8kB6lIm0",
         "titulo": "Camisa azul da Seleção: críticas ao design e lembrança histórica",
@@ -793,13 +845,13 @@ vertical de 65 segundos. Listas de `formatos` truncadas em 3 itens para caber.
 {
   "jobs": [
     {
-      "id": "b7ee0b11ddfc450ead7db71518a1f935",
+      "id": "4c55288b05694ef89508b81fea937e7c",
       "estado": "concluido",
       "ja_existia": false,
       "url": "https://youtube.com/shorts/LzS8kB6lIm0?si=0RP8BxS-q-XGH4Dw",
       "perfil": "edicao_1080",
       "projeto": "pessoal",
-      "criado_em": "2026-09-03T02:56:38+00:00",
+      "criado_em": "2026-09-03T03:41:10+00:00",
       "video": {
         "id": "LzS8kB6lIm0",
         "titulo": "Camisa azul da Seleção: críticas ao design e lembrança histórica",
@@ -820,13 +872,13 @@ vertical de 65 segundos. Listas de `formatos` truncadas em 3 itens para caber.
       "aviso": null
     },
     {
-      "id": "c34d6f042d49453c928268f0ff181ddc",
+      "id": "9ffa58ea7fd8474994f3d646933932d7",
       "estado": "cancelado",
       "ja_existia": false,
       "url": "https://youtube.com/shorts/LzS8kB6lIm0?si=0RP8BxS-q-XGH4Dw",
       "perfil": "so_audio",
       "projeto": "pessoal",
-      "criado_em": "2026-09-03T02:56:38+00:00",
+      "criado_em": "2026-09-03T03:41:10+00:00",
       "video": {
         "id": "LzS8kB6lIm0",
         "titulo": "Camisa azul da Seleção: críticas ao design e lembrança histórica",
@@ -870,8 +922,8 @@ vertical de 65 segundos. Listas de `formatos` truncadas em 3 itens para caber.
       "aviso": null,
       "motivo_falha": null,
       "mensagem_falha": null,
-      "criado_em": "2026-09-03T02:56:38+00:00",
-      "concluido_em": "2026-09-03T02:56:38+00:00"
+      "criado_em": "2026-09-03T03:41:10+00:00",
+      "concluido_em": "2026-09-03T03:41:10+00:00"
     }
   ]
 }
@@ -903,8 +955,8 @@ vertical de 65 segundos. Listas de `formatos` truncadas em 3 itens para caber.
       "aviso": null,
       "motivo_falha": null,
       "mensagem_falha": null,
-      "criado_em": "2026-09-03T02:56:38+00:00",
-      "concluido_em": "2026-09-03T02:56:38+00:00"
+      "criado_em": "2026-09-03T03:41:10+00:00",
+      "concluido_em": "2026-09-03T03:41:10+00:00"
     }
   ]
 }
@@ -992,7 +1044,7 @@ vertical de 65 segundos. Listas de `formatos` truncadas em 3 itens para caber.
           "caminho": "D:\\FOOTAGE\\pessoal\\20260901 - Camisa azul da Seleção críticas ao design e lembrança histórica [LzS8kB6lIm0].mp4",
           "projeto": "pessoal",
           "resolucao": "1080x1920",
-          "concluido_em": "2026-09-03T02:56:38+00:00"
+          "concluido_em": "2026-09-03T03:41:10+00:00"
         }
       }
     }
@@ -1127,13 +1179,13 @@ vertical de 65 segundos. Listas de `formatos` truncadas em 3 itens para caber.
 {
   "jobs": [
     {
-      "id": "b7ee0b11ddfc450ead7db71518a1f935",
+      "id": "4c55288b05694ef89508b81fea937e7c",
       "estado": "concluido",
       "ja_existia": false,
       "url": "https://youtube.com/shorts/LzS8kB6lIm0?si=0RP8BxS-q-XGH4Dw",
       "perfil": "edicao_1080",
       "projeto": "pessoal",
-      "criado_em": "2026-09-03T02:56:38+00:00",
+      "criado_em": "2026-09-03T03:41:10+00:00",
       "video": {
         "id": "LzS8kB6lIm0",
         "titulo": "Camisa azul da Seleção: críticas ao design e lembrança histórica",
@@ -1154,13 +1206,13 @@ vertical de 65 segundos. Listas de `formatos` truncadas em 3 itens para caber.
       "aviso": null
     },
     {
-      "id": "c34d6f042d49453c928268f0ff181ddc",
+      "id": "9ffa58ea7fd8474994f3d646933932d7",
       "estado": "cancelado",
       "ja_existia": false,
       "url": "https://youtube.com/shorts/LzS8kB6lIm0?si=0RP8BxS-q-XGH4Dw",
       "perfil": "so_audio",
       "projeto": "pessoal",
-      "criado_em": "2026-09-03T02:56:38+00:00",
+      "criado_em": "2026-09-03T03:41:10+00:00",
       "video": {
         "id": "LzS8kB6lIm0",
         "titulo": "Camisa azul da Seleção: críticas ao design e lembrança histórica",
@@ -1175,13 +1227,13 @@ vertical de 65 segundos. Listas de `formatos` truncadas em 3 itens para caber.
       "aviso": null
     },
     {
-      "id": "bb05fe25558a48c4a220ee8600c4b5cf",
+      "id": "8dcca921d6bf48c49be1f3a01a17775b",
       "estado": "concluido",
       "ja_existia": true,
       "url": "https://youtube.com/shorts/LzS8kB6lIm0?si=0RP8BxS-q-XGH4Dw",
       "perfil": "edicao_1080",
       "projeto": "pessoal",
-      "criado_em": "2026-09-03T02:56:38+00:00",
+      "criado_em": "2026-09-03T03:41:10+00:00",
       "video": {
         "id": "LzS8kB6lIm0",
         "titulo": "Camisa azul da Seleção: críticas ao design e lembrança histórica",
@@ -1225,8 +1277,8 @@ vertical de 65 segundos. Listas de `formatos` truncadas em 3 itens para caber.
       "aviso": "O arquivo já existia no destino; o download foi pulado e nada foi sobrescrito.",
       "motivo_falha": null,
       "mensagem_falha": null,
-      "criado_em": "2026-09-03T02:56:38+00:00",
-      "concluido_em": "2026-09-03T02:56:38+00:00"
+      "criado_em": "2026-09-03T03:41:10+00:00",
+      "concluido_em": "2026-09-03T03:41:10+00:00"
     },
     {
       "id": 1,
@@ -1247,8 +1299,8 @@ vertical de 65 segundos. Listas de `formatos` truncadas em 3 itens para caber.
       "aviso": null,
       "motivo_falha": null,
       "mensagem_falha": null,
-      "criado_em": "2026-09-03T02:56:38+00:00",
-      "concluido_em": "2026-09-03T02:56:38+00:00"
+      "criado_em": "2026-09-03T03:41:10+00:00",
+      "concluido_em": "2026-09-03T03:41:10+00:00"
     }
   ]
 }
@@ -1280,8 +1332,8 @@ vertical de 65 segundos. Listas de `formatos` truncadas em 3 itens para caber.
       "aviso": "O download foi interrompido, mas há um arquivo de 3145728 bytes em D:\\FOOTAGE\\pessoal\\parcial-de-um-download-interrompido.mp4. Não é possível verificar se está completo — confira antes de usar, ou baixe de novo com forcar.",
       "motivo_falha": null,
       "mensagem_falha": null,
-      "criado_em": "2026-09-03T02:56:38+00:00",
-      "concluido_em": "2026-09-03T02:56:39+00:00"
+      "criado_em": "2026-09-03T03:41:10+00:00",
+      "concluido_em": "2026-09-03T03:41:10+00:00"
     },
     {
       "id": 2,
@@ -1302,8 +1354,8 @@ vertical de 65 segundos. Listas de `formatos` truncadas em 3 itens para caber.
       "aviso": "O arquivo já existia no destino; o download foi pulado e nada foi sobrescrito.",
       "motivo_falha": null,
       "mensagem_falha": null,
-      "criado_em": "2026-09-03T02:56:38+00:00",
-      "concluido_em": "2026-09-03T02:56:38+00:00"
+      "criado_em": "2026-09-03T03:41:10+00:00",
+      "concluido_em": "2026-09-03T03:41:10+00:00"
     }
   ]
 }
