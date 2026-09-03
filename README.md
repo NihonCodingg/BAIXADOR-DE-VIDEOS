@@ -8,7 +8,7 @@ serviço, não tem autenticação e não deve ser exposta na rede.
 
 ## Estado atual
 
-**Back-end completo; interface e CLI pendentes.** Domínio, adapter, histórico, fila e API estão implementados. A interface visual é desenhada fora do repositório a partir do `CONTRATO-API.md` e integrada no T7; a CLI é o T8.
+**Interface funcionando; CLI pendente.** Domínio, adapter, histórico, fila, API e interface estão implementados. O visual foi desenhado fora do repositório a partir do `CONTRATO-API.md` e integrado no T7; a CLI é o T8.
 
 O que existe hoje:
 
@@ -26,13 +26,14 @@ O que existe hoje:
 | T4 — histórico SQLite | **implementado** |
 | T5 — fila, worker e progresso | **implementado** |
 | T6 — pipeline, API e `CONTRATO-API.md` | **implementado** |
+| T7 — integração do front, validada no navegador | **implementado** |
 | Smoke test com download real | **passou**: 1080x1920 H.264 + AAC |
-| T7 (integração do front) e T8 (CLI) | pendentes |
+| T8 — CLI | pendente |
 
-Os stubs levantam `NotImplementedError` com o ticket que os implementa. **As
-instruções de execução abaixo descrevem o alvo, não o que funciona hoje.**
+A CLI ainda levanta `NotImplementedError` com o ticket que a implementa; o
+resto das instruções de execução abaixo descreve o que funciona hoje.
 
-Suíte atual: **584 testes**. Rodar:
+Suíte atual: **589 testes**. Rodar:
 
 ```bash
 python -m pytest tests/ -v
@@ -132,8 +133,8 @@ winget install Gyan.FFmpeg
 
 ## Como rodar
 
-> A API já sobe. A página em `web/` ainda é o esqueleto do T7, e a CLI (T8)
-> não existe. Antes de rodar, ajuste `config/projetos.yaml` para as suas pastas.
+> A interface já sobe e funciona; a CLI (T8) não existe. Antes de rodar,
+> ajuste `config/projetos.yaml` para as suas pastas.
 
 Requisitos: Python 3.12+ e `ffmpeg` no `PATH`.
 
@@ -149,7 +150,7 @@ Interface web:
 python -m src.web
 ```
 
-Depois abrir `http://127.0.0.1:8000`.
+O navegador abre sozinho em `http://127.0.0.1:8000`.
 
 Linha de comando (T8, ainda não implementada):
 
