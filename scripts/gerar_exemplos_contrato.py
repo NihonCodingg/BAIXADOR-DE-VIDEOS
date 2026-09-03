@@ -122,7 +122,9 @@ def main():
         pipeline = Pipeline(config, temp / "data", downloader=dl,
                             detectar_ffmpeg=lambda: StatusFFmpeg(
                                 ffmpeg="C:\\ffmpeg\\bin\\ffmpeg.exe",
-                                ffprobe="C:\\ffmpeg\\bin\\ffprobe.exe"))
+                                ffprobe="C:\\ffmpeg\\bin\\ffprobe.exe"),
+                            # espião: gerar exemplo não abre janela
+                            abrir_no_explorador=lambda caminho: None)
         app = criar_app(pipeline, pasta_web=RAIZ / "web")
 
         with TestClient(app, raise_server_exceptions=False) as c:
@@ -167,6 +169,13 @@ def main():
             bloco("POST /api/fila — já baixado neste perfil (409)",
                   c.post("/api/fila", json={"urls": [URL_REAL], "perfil": "edicao_1080",
                                             "projeto": "pessoal"}))
+
+            baixado = c.get("/api/historico").json()["registros"][0]["caminho"]
+            bloco("POST /api/abrir-pasta — arquivo dentro de um projeto",
+                  c.post("/api/abrir-pasta", json={"caminho": baixado}))
+            bloco("POST /api/abrir-pasta — caminho fora dos projetos (400)",
+                  c.post("/api/abrir-pasta",
+                         json={"caminho": "C:\\Windows\\System32"}))
 
             # --- destino já ocupado: sucesso com aviso (SPEC 9.3) ---
             # Na vida real este é uma corrida: o arquivo aparece entre a

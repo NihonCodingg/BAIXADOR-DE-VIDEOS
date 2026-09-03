@@ -74,9 +74,10 @@ Códigos de status que a tela precisa tratar:
 | `GET` | `/api/fila` | Estado de todos os jobs. **Polling a cada 1 s** |
 | `DELETE` | `/api/fila/{id}` | Cancela um job que ainda não começou |
 | `GET` | `/api/historico` | O que já foi baixado, com busca e filtro |
+| `POST` | `/api/abrir-pasta` | Abre no explorador a pasta de um arquivo baixado |
 
-> **Não existe mais nenhum endpoint além destes seis.** O que a tela precisar e
-> não estiver aqui, veja §9 — em particular o botão "abrir pasta".
+> **Não existe mais nenhum endpoint além destes sete.** O que a tela precisar
+> e não estiver aqui não existe.
 
 ### 3.1 `GET /api/config`
 
@@ -211,30 +212,36 @@ ex.: `1080x1920`), `status`, `ja_existia`, `aviso`, `motivo_falha`,
 
 `status` no histórico: `baixando`, `concluido`, `falhou`, `interrompido`.
 
+### 3.7 `POST /api/abrir-pasta`
+
+Corpo: `{"caminho": "..."}` — o `caminho_final` de um job ou o `caminho` de um
+registro do histórico. Aceita arquivo **ou** pasta.
+
+Resposta: `200 {"aberto": true, "pasta": "D:\\FOOTAGE\\pessoal"}`. Quando o
+caminho é de um arquivo, quem abre é a **pasta que o contém** — o arquivo não
+fica selecionado.
+
+**O caminho precisa estar dentro de um projeto configurado.** Qualquer outro é
+`400`, e nada é aberto. A aplicação roda no seu computador, mas isso não é
+motivo para ter um endpoint que abre qualquer pasta do disco: a checagem
+compara segmento a segmento (então `.../cliente_x_secreto` não passa por estar
+"dentro" de `.../cliente_x`), resolve `..` antes de comparar e ignora a caixa,
+como o Windows.
+
+Também é `400`, com mensagem própria, quando o caminho está num projeto mas o
+arquivo não está mais no disco.
+
 ---
 
 ## 4. O que NÃO está implementado
 
-> ### ⛔ `POST /api/abrir-pasta` — NÃO EXISTE
->
-> **Não desenhe um botão "abrir pasta" que abra a pasta.** O endpoint não
-> existe e não será implementado nesta versão.
->
-> Um navegador não abre pastas do disco por conta própria; isso exigiria um
-> endpoint que peça ao sistema operacional. Ele está planejado para uma versão
-> futura, com esta forma:
->
-> ```
-> POST /api/abrir-pasta   {"caminho": "..."}
-> → 200 {"aberto": true}  |  400 se o caminho não estiver num projeto configurado
-> ```
->
-> **Enquanto isso, o botão deve COPIAR O CAMINHO** para a área de transferência
-> (`navigator.clipboard.writeText`), com um rótulo honesto: "Copiar caminho".
-> Desenhe-o assim, não como "Abrir pasta".
+Nada. Os sete endpoints de §3 existem e funcionam.
 
-Nada mais do que este documento descreve está pendente. Os seis endpoints de §3
-existem e funcionam.
+> `POST /api/abrir-pasta` esteve nesta seção como "não existe" até o T8, e a
+> tela usava só "Copiar caminho" no lugar. Hoje os dois botões convivem:
+> copiar serve para colar num Premiere ou num chat, abrir serve para ir até o
+> arquivo. Um navegador continua não abrindo pasta sozinho — quem abre é o
+> back-end, por isso o endpoint.
 
 ---
 
@@ -245,7 +252,7 @@ A API entrega valores **crus**. Não formata nada. Estes exigem tratamento:
 | Campo | Vem como | Mostrar como |
 |---|---|---|
 | `duracao_s` | **segundos** inteiros (`65`) | `1:05`. Acima de uma hora, `1:02:05`. `null` → `--:--` |
-| `tamanho_bytes` | **bytes** (`11062598`) | `10,5 MB`. `null` → `--` |
+| `tamanho_bytes` | **bytes** (`11062598`) | `10,6 MB`. `null` → `--` |
 | `progresso.percentual` | float (`38.88888`) ou `null` | Arredondar: `39%`. `null` = total desconhecido → barra indeterminada |
 | `progresso.velocidade_bps` | **bytes por segundo**, float ou `null` | `3,1 MB/s`. `null` → `--` |
 | `progresso.eta_s` | segundos ou `null` | `0:02`. `null` → `--` |
@@ -289,7 +296,7 @@ São **seis** estados. `interrompido` só aparece no histórico.
 |---|---|---|
 | `na_fila` | Posição na fila, sem barra | **Sim** |
 | `baixando` | Barra de progresso, velocidade, tempo restante | Não (botão desabilitado) |
-| `concluido` | Caminho do arquivo e botão "Copiar caminho" (§4). **Se `ja_existia` for `true`, um selo "já existia — não baixado"** | Não |
+| `concluido` | Caminho do arquivo, com "Copiar caminho" e "Abrir pasta" (§3.7). **Se `ja_existia` for `true`, um selo "já existia — não baixado"** | Não |
 | `falhou` | `mensagem_falha` em destaque; se `motivo_falha` for `rede` ou `rate_limit`, oferecer **tentar de novo** | Não |
 | `cancelado` | Discreto, pode colapsar | Não |
 | `interrompido` | "O programa fechou durante o download". Se houver `aviso`, mostrá-lo — pode haver um arquivo parcial no disco (§7) | — |
@@ -376,11 +383,11 @@ Quatro áreas na página:
    restante. Botão de cancelar habilitado só em `na_fila`. Selo de `ja_existia`
    e avisos quando houver. Atualiza a cada segundo.
 4. **Histórico** — busca por texto e filtro por projeto. Agrupar por vídeo, já
-   que cada tentativa é uma linha. Botão "Copiar caminho" (**não** "abrir
-   pasta", §4).
+   que cada tentativa é uma linha. Botões "Copiar caminho" e "Abrir pasta"
+   (§3.7).
 
 O que **não** desenhar: login, upload, seleção de formato avulso (os perfis
-cobrem isso), botão de cancelar download em andamento, botão que abre pasta.
+cobrem isso), botão de cancelar download em andamento.
 
 ---
 
@@ -571,7 +578,7 @@ vertical de 65 segundos. Listas de `formatos` truncadas em 3 itens para caber.
 ```json
 {
   "ids": [
-    "0e91d6c7ed9540dbacf204607c25fb40"
+    "991ffba7633b4a269c37c0db350a11ba"
   ]
 }
 ```
@@ -584,13 +591,13 @@ vertical de 65 segundos. Listas de `formatos` truncadas em 3 itens para caber.
 {
   "jobs": [
     {
-      "id": "0e91d6c7ed9540dbacf204607c25fb40",
+      "id": "991ffba7633b4a269c37c0db350a11ba",
       "estado": "baixando",
       "ja_existia": false,
       "url": "https://youtube.com/shorts/LzS8kB6lIm0?si=0RP8BxS-q-XGH4Dw",
       "perfil": "edicao_1080",
       "projeto": "pessoal",
-      "criado_em": "2026-09-03T00:20:05+00:00",
+      "criado_em": "2026-09-03T01:36:35+00:00",
       "video": {
         "id": "LzS8kB6lIm0",
         "titulo": "Camisa azul da Seleção: críticas ao design e lembrança histórica",
@@ -715,13 +722,13 @@ vertical de 65 segundos. Listas de `formatos` truncadas em 3 itens para caber.
 {
   "jobs": [
     {
-      "id": "0e91d6c7ed9540dbacf204607c25fb40",
+      "id": "991ffba7633b4a269c37c0db350a11ba",
       "estado": "concluido",
       "ja_existia": false,
       "url": "https://youtube.com/shorts/LzS8kB6lIm0?si=0RP8BxS-q-XGH4Dw",
       "perfil": "edicao_1080",
       "projeto": "pessoal",
-      "criado_em": "2026-09-03T00:20:05+00:00",
+      "criado_em": "2026-09-03T01:36:35+00:00",
       "video": {
         "id": "LzS8kB6lIm0",
         "titulo": "Camisa azul da Seleção: críticas ao design e lembrança histórica",
@@ -742,13 +749,13 @@ vertical de 65 segundos. Listas de `formatos` truncadas em 3 itens para caber.
       "aviso": null
     },
     {
-      "id": "519f09e044254432ac11187784ea9609",
+      "id": "a4e115059d15404fa72d461baa18d896",
       "estado": "cancelado",
       "ja_existia": false,
       "url": "https://youtube.com/shorts/LzS8kB6lIm0?si=0RP8BxS-q-XGH4Dw",
       "perfil": "so_audio",
       "projeto": "pessoal",
-      "criado_em": "2026-09-03T00:20:05+00:00",
+      "criado_em": "2026-09-03T01:36:35+00:00",
       "video": {
         "id": "LzS8kB6lIm0",
         "titulo": "Camisa azul da Seleção: críticas ao design e lembrança histórica",
@@ -792,8 +799,8 @@ vertical de 65 segundos. Listas de `formatos` truncadas em 3 itens para caber.
       "aviso": null,
       "motivo_falha": null,
       "mensagem_falha": null,
-      "criado_em": "2026-09-03T00:20:05+00:00",
-      "concluido_em": "2026-09-03T00:20:05+00:00"
+      "criado_em": "2026-09-03T01:36:35+00:00",
+      "concluido_em": "2026-09-03T01:36:35+00:00"
     }
   ]
 }
@@ -825,8 +832,8 @@ vertical de 65 segundos. Listas de `formatos` truncadas em 3 itens para caber.
       "aviso": null,
       "motivo_falha": null,
       "mensagem_falha": null,
-      "criado_em": "2026-09-03T00:20:05+00:00",
-      "concluido_em": "2026-09-03T00:20:05+00:00"
+      "criado_em": "2026-09-03T01:36:35+00:00",
+      "concluido_em": "2026-09-03T01:36:35+00:00"
     }
   ]
 }
@@ -914,7 +921,7 @@ vertical de 65 segundos. Listas de `formatos` truncadas em 3 itens para caber.
           "caminho": "D:\\FOOTAGE\\pessoal\\20260901 - Camisa azul da Seleção críticas ao design e lembrança histórica [LzS8kB6lIm0].mp4",
           "projeto": "pessoal",
           "resolucao": "1080x1920",
-          "concluido_em": "2026-09-03T00:20:05+00:00"
+          "concluido_em": "2026-09-03T01:36:35+00:00"
         }
       }
     }
@@ -932,6 +939,27 @@ vertical de 65 segundos. Listas de `formatos` truncadas em 3 itens para caber.
 }
 ```
 
+### POST /api/abrir-pasta — arquivo dentro de um projeto
+
+`200`
+
+```json
+{
+  "aberto": true,
+  "pasta": "D:\\FOOTAGE\\pessoal"
+}
+```
+
+### POST /api/abrir-pasta — caminho fora dos projetos (400)
+
+`400`
+
+```json
+{
+  "erro": "Só é possível abrir pastas dentro de um projeto configurado. Fora de todos eles: C:\\Windows\\System32"
+}
+```
+
 ### GET /api/fila — job com `ja_existia`: o arquivo já estava no destino
 
 `200`
@@ -940,13 +968,13 @@ vertical de 65 segundos. Listas de `formatos` truncadas em 3 itens para caber.
 {
   "jobs": [
     {
-      "id": "0e91d6c7ed9540dbacf204607c25fb40",
+      "id": "991ffba7633b4a269c37c0db350a11ba",
       "estado": "concluido",
       "ja_existia": false,
       "url": "https://youtube.com/shorts/LzS8kB6lIm0?si=0RP8BxS-q-XGH4Dw",
       "perfil": "edicao_1080",
       "projeto": "pessoal",
-      "criado_em": "2026-09-03T00:20:05+00:00",
+      "criado_em": "2026-09-03T01:36:35+00:00",
       "video": {
         "id": "LzS8kB6lIm0",
         "titulo": "Camisa azul da Seleção: críticas ao design e lembrança histórica",
@@ -967,13 +995,13 @@ vertical de 65 segundos. Listas de `formatos` truncadas em 3 itens para caber.
       "aviso": null
     },
     {
-      "id": "519f09e044254432ac11187784ea9609",
+      "id": "a4e115059d15404fa72d461baa18d896",
       "estado": "cancelado",
       "ja_existia": false,
       "url": "https://youtube.com/shorts/LzS8kB6lIm0?si=0RP8BxS-q-XGH4Dw",
       "perfil": "so_audio",
       "projeto": "pessoal",
-      "criado_em": "2026-09-03T00:20:05+00:00",
+      "criado_em": "2026-09-03T01:36:35+00:00",
       "video": {
         "id": "LzS8kB6lIm0",
         "titulo": "Camisa azul da Seleção: críticas ao design e lembrança histórica",
@@ -988,13 +1016,13 @@ vertical de 65 segundos. Listas de `formatos` truncadas em 3 itens para caber.
       "aviso": null
     },
     {
-      "id": "e9622fffd41e42178c5b7d0ecbc5c572",
+      "id": "86f833eb59eb44b39418dd992e933fdb",
       "estado": "concluido",
       "ja_existia": true,
       "url": "https://youtube.com/shorts/LzS8kB6lIm0?si=0RP8BxS-q-XGH4Dw",
       "perfil": "edicao_1080",
       "projeto": "pessoal",
-      "criado_em": "2026-09-03T00:20:05+00:00",
+      "criado_em": "2026-09-03T01:36:35+00:00",
       "video": {
         "id": "LzS8kB6lIm0",
         "titulo": "Camisa azul da Seleção: críticas ao design e lembrança histórica",
@@ -1038,8 +1066,8 @@ vertical de 65 segundos. Listas de `formatos` truncadas em 3 itens para caber.
       "aviso": "O arquivo já existia no destino; o download foi pulado e nada foi sobrescrito.",
       "motivo_falha": null,
       "mensagem_falha": null,
-      "criado_em": "2026-09-03T00:20:05+00:00",
-      "concluido_em": "2026-09-03T00:20:05+00:00"
+      "criado_em": "2026-09-03T01:36:35+00:00",
+      "concluido_em": "2026-09-03T01:36:35+00:00"
     },
     {
       "id": 1,
@@ -1060,8 +1088,8 @@ vertical de 65 segundos. Listas de `formatos` truncadas em 3 itens para caber.
       "aviso": null,
       "motivo_falha": null,
       "mensagem_falha": null,
-      "criado_em": "2026-09-03T00:20:05+00:00",
-      "concluido_em": "2026-09-03T00:20:05+00:00"
+      "criado_em": "2026-09-03T01:36:35+00:00",
+      "concluido_em": "2026-09-03T01:36:35+00:00"
     }
   ]
 }
@@ -1093,8 +1121,8 @@ vertical de 65 segundos. Listas de `formatos` truncadas em 3 itens para caber.
       "aviso": "O download foi interrompido, mas há um arquivo de 3145728 bytes em D:\\FOOTAGE\\pessoal\\parcial-de-um-download-interrompido.mp4. Não é possível verificar se está completo — confira antes de usar, ou baixe de novo com forcar.",
       "motivo_falha": null,
       "mensagem_falha": null,
-      "criado_em": "2026-09-03T00:20:06+00:00",
-      "concluido_em": "2026-09-03T00:20:06+00:00"
+      "criado_em": "2026-09-03T01:36:35+00:00",
+      "concluido_em": "2026-09-03T01:36:35+00:00"
     },
     {
       "id": 2,
@@ -1115,8 +1143,8 @@ vertical de 65 segundos. Listas de `formatos` truncadas em 3 itens para caber.
       "aviso": "O arquivo já existia no destino; o download foi pulado e nada foi sobrescrito.",
       "motivo_falha": null,
       "mensagem_falha": null,
-      "criado_em": "2026-09-03T00:20:05+00:00",
-      "concluido_em": "2026-09-03T00:20:05+00:00"
+      "criado_em": "2026-09-03T01:36:35+00:00",
+      "concluido_em": "2026-09-03T01:36:35+00:00"
     }
   ]
 }
