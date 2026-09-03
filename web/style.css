@@ -638,7 +638,9 @@ button, input, select, textarea { font: inherit; color: inherit; }
   padding-top: 2px;
   min-width: 22px;
 }
-.hist__acoes { flex: none; }
+/* T8: com dois botões, lado a lado eles roubariam metade da coluna do
+   histórico no celular. Empilhados, a largura é a de um só. */
+.hist__acoes { flex: none; display: flex; flex-direction: column; gap: 6px; }
 
 /* ------------------------------------------------------------
    8. VAZIOS, CARREGANDO, TOASTS

@@ -750,7 +750,7 @@ function estruturaJob(j, posicao) {
   if (j.estado === 'concluido' && j.caminho_final) {
     html += '<div class="job__rodape">' +
       '<span class="caminho" title="' + esc(j.caminho_final) + '">' + esc(j.caminho_final) + '</span>' +
-      '<button class="btn btn--mini" data-acao="copiar" data-caminho="' + esc(j.caminho_final) + '">Copiar caminho</button>' +
+      botoesDoCaminho(j.caminho_final) +
       '</div>';
   }
 
@@ -928,9 +928,19 @@ function notaHistorico(r) {
 }
 
 function botaoCopiar(r) {
-  return '<button class="btn btn--mini" data-acao="copiar" data-caminho="' +
-    esc(r.caminho || '') + '"' + (temArquivo(r) ? '' : ' disabled') +
-    '>Copiar caminho</button>';
+  return botoesDoCaminho(r.caminho, !temArquivo(r));
+}
+
+/* Os dois botões de caminho, juntos. "Abrir pasta" chama /api/abrir-pasta,
+   que só aceita caminho dentro de um projeto configurado — um navegador não
+   abre pasta do disco sozinho, quem abre é o back-end (contrato §3.7). */
+function botoesDoCaminho(caminho, desabilitado) {
+  var atributos = 'data-caminho="' + esc(caminho || '') + '"' +
+    (desabilitado || !caminho ? ' disabled' : '');
+  return '<button class="btn btn--mini" data-acao="copiar" ' + atributos +
+      '>Copiar caminho</button>' +
+    '<button class="btn btn--mini" data-acao="abrir" ' + atributos +
+      '>Abrir pasta</button>';
 }
 
 /* Tentativa anterior: o mesmo componente da linha do histórico, sem repetir o
@@ -993,8 +1003,17 @@ function toast(msg, tom) {
   setTimeout(function () { el.remove(); }, 6000);
 }
 
+/* O endpoint existe desde o T8; até então este botão só copiava o caminho. */
+function abrirPasta(caminho) {
+  api('POST', '/api/abrir-pasta', { caminho: caminho }).then(function () {
+    registrarSucessoApi();
+    toast('Pasta aberta no explorador.', 'ok');
+  }).catch(function (e) {
+    if (!registrarFalhaApi(e)) toast(e.message, 'erro');
+  });
+}
+
 function copiarCaminho(caminho) {
-  // §8: o endpoint "abrir pasta" ainda não existe; por ora copiamos o caminho.
   var ok = function () { toast('Caminho copiado.', 'ok'); };
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(caminho).then(ok, function () { copiaManual(caminho, ok); });
@@ -1068,6 +1087,7 @@ function ligarEventos() {
     if (b.dataset.acao === 'cancelar') cancelar(b.dataset.id);
     if (b.dataset.acao === 'tentar') tentarDeNovo(b.dataset.id);
     if (b.dataset.acao === 'copiar') copiarCaminho(b.dataset.caminho);
+    if (b.dataset.acao === 'abrir') abrirPasta(b.dataset.caminho);
     if (b.dataset.acao === 'expandir') alternarTentativas(b);
     if (b.dataset.acao === 'refazer') refazer(b.dataset);
   });
