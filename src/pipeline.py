@@ -19,11 +19,12 @@ from pathlib import Path
 
 import yaml
 
-from .domain.erros import LinkInvalido
+from .domain.erros import LinkInvalido, ProjetoInvalido
 from .domain.models import EstadoJob, Job, Video, tem_audio, tem_video
 from .domain.nomes import montar_caminho, resolver_colisao
 from .domain.perfis import carregar_perfis, disponivel, opcoes_ytdlp
-from .domain.projetos import Projeto, carregar_projetos
+from .domain.projetos import (NOME_AVULSO, Projeto, carregar_projetos,
+                              validar_nome)
 from .domain.validacao import normalizar_link, normalizar_lote
 from .download.adapter import Downloader, validar_seletor
 from .download.ffmpeg import detectar
@@ -31,6 +32,7 @@ from .download.traducao_erros import ErroDeDownload
 from .queue.fila import Fila
 from .queue.worker import Preparacao, Worker
 from .storage.historico import Historico
+from .storage import projetos_yaml
 
 _ATIVOS = (EstadoJob.NA_FILA, EstadoJob.BAIXANDO)
 
@@ -61,6 +63,44 @@ def abrir_no_sistema(caminho: str) -> None:
         subprocess.run(["xdg-open", caminho], check=False)    # noqa: S603,S607
 
 
+ESPERA_SELETOR = 180.0          # segundos até desistir do diálogo aberto
+
+
+def escolher_pasta_no_sistema(espera: float = ESPERA_SELETOR) -> str | None:
+    """Abre o seletor NATIVO de pasta e devolve o caminho, ou None se
+    cancelado.
+
+    Roda em SUBPROCESSO, não no servidor, por três motivos medidos:
+    o Tk não é thread-safe e os handlers do FastAPI rodam em threadpool;
+    um diálogo esquecido aberto penduraria a requisição para sempre, e aqui
+    o timeout mata o processo; e um erro do Tk derruba o processo dele, não
+    o servidor. Custo medido: ~190 ms.
+
+    Só faz sentido porque servidor e navegador estão na MESMA máquina — o
+    que o SPEC garante ao vincular em 127.0.0.1.
+    """
+    try:
+        concluido = subprocess.run(                       # noqa: S603
+            [sys.executable, "-m", "src.seletor_pasta"],
+            capture_output=True, text=True, encoding="utf-8",
+            timeout=espera, cwd=str(Path(__file__).resolve().parent.parent))
+    except subprocess.TimeoutExpired as erro:
+        raise EntradaInvalida(
+            "O seletor de pasta ficou aberto tempo demais e foi fechado. "
+            "Tente de novo, ou cole o caminho no campo.") from erro
+    except OSError as erro:
+        raise EntradaInvalida(
+            f"Não foi possível abrir o seletor de pasta: {erro}. "
+            "Cole o caminho no campo.") from erro
+
+    if concluido.returncode != 0:
+        raise EntradaInvalida(
+            "O seletor de pasta falhou. Cole o caminho no campo. "
+            f"Detalhe: {(concluido.stderr or '').strip()[:200]}")
+    escolhido = (concluido.stdout or "").strip()
+    return escolhido or None
+
+
 class ErroDePedido(Exception):
     """Base dos erros que a API traduz em código HTTP."""
 
@@ -80,15 +120,17 @@ class Conflito(ErroDePedido):
 class Pipeline:
     def __init__(self, config_dir: Path, data_dir: Path, *,
                  downloader=None, detectar_ffmpeg: Callable | None = None,
-                 abrir_no_explorador: Callable[[str], None] | None = None):
+                 abrir_no_explorador: Callable[[str], None] | None = None,
+                 escolher_pasta: Callable[[], str | None] | None = None):
         """Carrega perfis e projetos, detecta o ffmpeg, abre o histórico e
         reconcilia os interrompidos (SPEC 10.1), sobe o worker."""
         self._config_dir = Path(config_dir)
         self._data_dir = Path(data_dir)
         self._downloader = downloader or Downloader()
         self._ffmpeg = (detectar_ffmpeg or detectar)()
-        # Injetado para o teste não abrir uma janela do explorador.
+        # Injetados para o teste não abrir janela nenhuma.
         self._abrir = abrir_no_explorador or abrir_no_sistema
+        self._escolher_pasta = escolher_pasta or escolher_pasta_no_sistema
 
         self._perfis = carregar_perfis(
             self._ler_yaml("perfis.yaml"), validar_seletor=validar_seletor)
@@ -108,6 +150,9 @@ class Pipeline:
         self._cache_lock = threading.Lock()
         self._videos: dict[str, Video] = {}        # url -> Video, da inspeção
         self._avisos: dict[str, str] = {}          # job_id -> aviso do preparo
+        # job_id -> destino avulso. Vive aqui e não no Job porque é uma pasta
+        # de UMA execução: o domínio não precisa saber que ela existe.
+        self._destinos: dict[str, Projeto] = {}
 
         self._worker = Worker(self._fila, self._downloader, self._historico,
                               self._preparar)
@@ -274,17 +319,23 @@ class Pipeline:
             for j in self._fila.instantaneo()
         )
 
-    def enfileirar(self, urls: list[str], perfil: str, projeto: str,
-                   forcar: bool = False) -> list[str]:
+    def enfileirar(self, urls: list[str], perfil: str,
+                   projeto: str | None = None, forcar: bool = False,
+                   pasta: str | None = None) -> list[str]:
         """Devolve os ids dos jobs. EntradaInvalida / Conflito.
 
         Tudo ou nada: valida todos os links (inclusive duplicatas) antes de
         enfileirar o primeiro.
+
+        `pasta` é o destino AVULSO: uma pasta digitada na hora, usada só
+        nestes downloads e não gravada no projetos.yaml. Vale um ou outro,
+        nunca os dois.
         """
         if not urls:
             raise EntradaInvalida("Nenhum link informado.")
 
-        definicao, _ = self._validar_destino(perfil, projeto)
+        definicao, destino = self._validar_destino(perfil, projeto, pasta)
+        projeto = destino.nome
 
         jobs: list[Job] = []
         for url in urls:
@@ -308,18 +359,26 @@ class Pipeline:
                 raise Conflito(f"Este vídeo já está na fila no perfil {perfil!r}.")
 
             jobs.append(Job(
-                id=uuid.uuid4().hex, video=video, perfil=perfil, projeto=projeto,
+                id=uuid.uuid4().hex, video=video, perfil=perfil,
+                projeto=destino.nome,
                 estado=EstadoJob.NA_FILA, criado_em=datetime.now(timezone.utc),
                 url_original=link.original,
             ))
 
+        if pasta:
+            with self._cache_lock:
+                for job in jobs:
+                    self._destinos[job.id] = destino
         return [self._fila.adicionar(job) for job in jobs]
 
-    def _validar_destino(self, perfil: str, projeto: str):
-        """Perfil e projeto existem, estão disponíveis e são válidos.
+    def _validar_destino(self, perfil: str, projeto: str | None,
+                         pasta: str | None = None):
+        """Perfil e destino existem, estão disponíveis e são válidos.
 
         Fatorado porque `enfileirar` e `simular` precisam exatamente da mesma
         checagem: o --dry-run não vale nada se aceitar o que o download recusa.
+
+        O destino vem de um projeto cadastrado OU de uma `pasta` avulsa.
         """
         definicao = self._perfis.get(perfil)
         if definicao is None:
@@ -327,12 +386,35 @@ class Pipeline:
         if not disponivel(definicao, self._ffmpeg.disponivel):
             raise EntradaInvalida(
                 f"O perfil {perfil!r} exige ffmpeg, que não foi encontrado no PATH.")
+
+        if projeto and pasta:
+            raise EntradaInvalida(
+                "Informe um projeto OU uma pasta avulsa, não os dois.")
+        if pasta:
+            return definicao, self._destino_avulso(pasta)
+        if not projeto:
+            raise EntradaInvalida(
+                "Informe o projeto de destino, ou uma pasta avulsa.")
         if projeto not in self._projetos:
             raise EntradaInvalida(f"Projeto {projeto!r} não existe.")
         valido, motivo = self._projetos_status[projeto]
         if not valido:
             raise EntradaInvalida(f"Projeto {projeto!r} inválido: {motivo}")
         return definicao, self._projetos[projeto]
+
+    def _destino_avulso(self, pasta: str) -> Projeto:
+        """Pasta digitada na hora, válida só para este download.
+
+        Passa pela MESMA checagem de gravabilidade de um projeto cadastrado:
+        descobrir que a pasta não aceita escrita depois de baixar 4 GB seria
+        a pior hora.
+        """
+        alvo, erro = self._checar_destino_novo(pasta)
+        if erro:
+            raise EntradaInvalida(f"Pasta avulsa inválida: {erro}")
+        # O nome é reservado e fixo: quem diz PARA ONDE o arquivo foi é a
+        # coluna `caminho` do histórico, que é exata.
+        return Projeto(nome=NOME_AVULSO, rotulo="Pasta avulsa", pasta=str(alvo))
 
     def _destino(self, video: Video, perfil, projeto: Projeto) -> tuple[str, str | None]:
         """Onde o arquivo vai cair, e o aviso de pasta profunda demais.
@@ -346,7 +428,8 @@ class Pipeline:
             video.data_upload, "." + perfil.merge_output_format)
         return resolver_colisao(montado.caminho, os.path.exists), montado.aviso
 
-    def simular(self, urls: list[str], perfil: str, projeto: str) -> list[dict]:
+    def simular(self, urls: list[str], perfil: str,
+                projeto: str | None = None, pasta: str | None = None) -> list[dict]:
         """O que `enfileirar` faria, sem baixar nada e sem criar pasta.
 
         Alimenta o `--dry-run` da CLI. Consulta os metadados (é de onde sai o
@@ -358,7 +441,7 @@ class Pipeline:
         """
         if not urls:
             raise EntradaInvalida("Nenhum link informado.")
-        definicao, destino_projeto = self._validar_destino(perfil, projeto)
+        definicao, destino_projeto = self._validar_destino(perfil, projeto, pasta)
 
         itens: list[dict] = []
         for url in urls:
@@ -398,7 +481,9 @@ class Pipeline:
         na hora de enfileirar. NomeImpossivel sobe e vira falha do job.
         """
         perfil = self._perfis[job.perfil]
-        projeto = self._projetos[job.projeto]
+        with self._cache_lock:
+            avulso = self._destinos.get(job.id)
+        projeto = avulso or self._projetos[job.projeto]
         Path(projeto.pasta).mkdir(parents=True, exist_ok=True)
 
         destino, aviso = self._destino(job.video, perfil, projeto)
@@ -465,6 +550,108 @@ class Pipeline:
     def historico(self, termo: str | None = None, projeto: str | None = None,
                   limite: int = 100) -> list[dict]:
         return [asdict(r) for r in self._historico.buscar(termo, projeto, limite)]
+
+    # -------------------------------------------------- projetos na tela
+
+    def _checar_destino_novo(self, caminho: str) -> tuple[Path | None, str | None]:
+        """A pasta existe, é pasta, e aceita escrita DE VERDADE.
+
+        O teste é uma escrita real, não `os.access`: no Windows o `os.access`
+        ignora ACL e responde que dá para escrever em pasta onde não dá. Um
+        projeto cadastrado assim só falharia na hora do primeiro download.
+        """
+        if not caminho or not str(caminho).strip():
+            return None, "o caminho não pode ficar em branco"
+        try:
+            alvo = Path(caminho).expanduser().resolve()
+        except (OSError, ValueError) as erro:
+            return None, f"caminho inválido ({erro})"
+        if not alvo.exists():
+            return None, f"a pasta não existe: {alvo}"
+        if not alvo.is_dir():
+            return None, f"o caminho existe mas não é uma pasta: {alvo}"
+
+        teste = alvo / f".baixador-escrita-{uuid.uuid4().hex[:8]}.tmp"
+        try:
+            teste.write_bytes(b"")
+        except OSError as erro:
+            return None, f"a pasta não aceita escrita ({erro.strerror or erro})"
+        finally:
+            try:
+                teste.unlink(missing_ok=True)
+            except OSError:
+                pass
+        return alvo, None
+
+    def _projeto_dict(self, projeto: Projeto) -> dict:
+        valido, motivo = self._projetos_status[projeto.nome]
+        return {"nome": projeto.nome, "rotulo": projeto.rotulo,
+                "pasta": projeto.pasta, "valido": valido, "motivo": motivo}
+
+    def projetos(self) -> list[dict]:
+        return [self._projeto_dict(p) for p in self._projetos.values()]
+
+    def _recarregar_projetos(self) -> None:
+        self._projetos = carregar_projetos(self._ler_yaml("projetos.yaml"))
+        self._projetos_status = {
+            nome: self._checar_pasta(projeto)
+            for nome, projeto in self._projetos.items()
+        }
+
+    def adicionar_projeto(self, nome: str, caminho: str,
+                          rotulo: str | None = None) -> dict:
+        """Cadastra e grava no projetos.yaml. EntradaInvalida / Conflito."""
+        try:
+            nome = validar_nome(nome)
+        except ProjetoInvalido as erro:
+            raise EntradaInvalida(str(erro)) from erro
+
+        existente = next((n for n in self._projetos if n.casefold() == nome.casefold()),
+                         None)
+        if existente is not None:
+            raise Conflito(
+                f"Já existe um projeto chamado {existente!r}. "
+                "Escolha outro nome ou remova o antigo.")
+
+        alvo, erro = self._checar_destino_novo(caminho)
+        if erro:
+            raise EntradaInvalida(f"Pasta inválida: {erro}")
+
+        try:
+            projetos_yaml.adicionar(self._config_dir / "projetos.yaml",
+                                    nome, (rotulo or nome).strip() or nome, str(alvo))
+        except Exception as erro:  # noqa: BLE001
+            raise EntradaInvalida(
+                f"Não foi possível gravar em projetos.yaml: {erro}") from erro
+
+        self._recarregar_projetos()
+        return self._projeto_dict(self._projetos[nome])
+
+    def remover_projeto(self, nome: str) -> bool:
+        """Tira do projetos.yaml. NaoEncontrado / Conflito.
+
+        O histórico NÃO é tocado: as linhas antigas continuam apontando para
+        os arquivos, que continuam no disco. Remover o projeto tira o destino
+        da lista, não o footage já baixado.
+        """
+        if nome not in self._projetos:
+            raise NaoEncontrado(f"Projeto {nome!r} não existe.")
+        ativo = next((j for j in self._fila.instantaneo()
+                      if j.projeto == nome and j.estado in _ATIVOS), None)
+        if ativo is not None:
+            raise Conflito(
+                f"O projeto {nome!r} tem download em andamento ou na fila. "
+                "Espere terminar para removê-lo.")
+        try:
+            projetos_yaml.remover(self._config_dir / "projetos.yaml", nome)
+        except Exception as erro:  # noqa: BLE001
+            raise EntradaInvalida(str(erro)) from erro
+        self._recarregar_projetos()
+        return True
+
+    def escolher_pasta(self) -> str | None:
+        """Abre o seletor nativo. None se o usuário cancelar."""
+        return self._escolher_pasta()
 
     # ------------------------------------------------------ abrir pasta
 
@@ -533,16 +720,7 @@ class Pipeline:
                 }
                 for p in self._perfis.values()
             ],
-            "projetos": [
-                {
-                    "nome": pj.nome,
-                    "rotulo": pj.rotulo,
-                    "pasta": pj.pasta,
-                    "valido": self._projetos_status[pj.nome][0],
-                    "motivo": self._projetos_status[pj.nome][1],
-                }
-                for pj in self._projetos.values()
-            ],
+            "projetos": self.projetos(),
         }
 
     # ------------------------------------------------------------ fim

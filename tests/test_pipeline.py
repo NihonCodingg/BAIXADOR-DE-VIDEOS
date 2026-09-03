@@ -8,6 +8,7 @@ Referência: SPEC 4.4, 10.1, 11.
 
 import json
 import shutil
+import threading
 import time
 from pathlib import Path
 
@@ -649,6 +650,233 @@ def test_estado_fila_expoe_ja_existia(subir):
     j = esperar_terminal(p, ids[0])
     assert j["ja_existia"] is False
     assert "aviso" in j
+
+
+# ===========================================================================
+# Projetos gerenciados pela tela
+# ===========================================================================
+
+class DownloaderQueTrava:
+    """Segura o download até liberarem, para haver job ATIVO na fila."""
+
+    def __init__(self, info):
+        self.info = info
+        self.entrou = threading.Event()
+        self.liberar = threading.Event()
+
+    def inspecionar(self, url):
+        return self.info
+
+    def baixar(self, url, opcoes, ao_progredir):
+        self.entrou.set()
+        self.liberar.wait(10)
+        destino = Path(opcoes["outtmpl"])
+        destino.parent.mkdir(parents=True, exist_ok=True)
+        destino.write_bytes(bytes(16))
+        return str(destino)
+
+
+@pytest.fixture
+def com_projetos(ambiente, info_dict_real, tmp_path):
+    """Pipeline real, mais uma pasta que EXISTE para cadastrar."""
+    p = Pipeline(ambiente["config"], ambiente["data"],
+                 downloader=DownloaderEco(info_dict_real),
+                 detectar_ffmpeg=ffmpeg_presente)
+    nova = tmp_path / "pasta_nova"
+    nova.mkdir()
+    yield p, nova, ambiente["config"] / "projetos.yaml"
+    p.encerrar()
+
+
+def test_adicionar_projeto_entra_na_config_e_no_yaml(com_projetos):
+    p, nova, arquivo = com_projetos
+    criado = p.adicionar_projeto("cliente_novo", str(nova), "Cliente Novo")
+
+    assert criado["nome"] == "cliente_novo" and criado["valido"] is True
+    assert "cliente_novo" in {x["nome"] for x in p.projetos()}
+    assert "cliente_novo" in {x["nome"] for x in p.config()["projetos"]}
+    assert "cliente_novo" in arquivo.read_text(encoding="utf-8")
+
+
+def test_adicionar_projeto_ja_serve_de_destino(com_projetos):
+    """Cadastrar e não poder usar no mesmo instante seria meio caminho."""
+    p, nova, _ = com_projetos
+    p.adicionar_projeto("cliente_novo", str(nova))
+    ids = p.enfileirar([URL_REAL], perfil="edicao_1080", projeto="cliente_novo")
+    job = esperar_terminal(p, ids[0])
+    assert job["estado"] == "concluido"
+    assert Path(job["caminho_final"]).parent == nova
+
+
+def test_adicionar_projeto_recusa_pasta_inexistente(com_projetos, tmp_path):
+    p, _, _ = com_projetos
+    with pytest.raises(EntradaInvalida) as erro:
+        p.adicionar_projeto("x", str(tmp_path / "nao_existe"))
+    assert "não existe" in str(erro.value)
+
+
+def test_adicionar_projeto_recusa_arquivo_no_lugar_de_pasta(com_projetos, tmp_path):
+    p, _, _ = com_projetos
+    arquivo = tmp_path / "um_arquivo.txt"
+    arquivo.write_text("nao sou pasta", encoding="utf-8")
+    with pytest.raises(EntradaInvalida) as erro:
+        p.adicionar_projeto("x", str(arquivo))
+    assert "não é uma pasta" in str(erro.value)
+
+
+def test_adicionar_projeto_testa_escrita_de_verdade(com_projetos, monkeypatch):
+    """os.access mente no Windows: ele ignora ACL e diz que dá para escrever
+    onde não dá. Por isso a checagem grava um arquivo de teste."""
+    p, nova, _ = com_projetos
+    original = Path.write_bytes
+
+    def recusar(self, dados):
+        if self.name.startswith(".baixador-escrita-"):
+            raise PermissionError(13, "Acesso negado")
+        return original(self, dados)
+
+    monkeypatch.setattr(Path, "write_bytes", recusar)
+    with pytest.raises(EntradaInvalida) as erro:
+        p.adicionar_projeto("x", str(nova))
+    assert "não aceita escrita" in str(erro.value)
+
+
+def test_adicionar_projeto_nao_deixa_o_arquivo_de_teste_para_tras(com_projetos):
+    p, nova, _ = com_projetos
+    p.adicionar_projeto("cliente_novo", str(nova))
+    assert list(nova.iterdir()) == [], "o teste de escrita tem que se limpar"
+
+
+def test_adicionar_projeto_recusa_nome_repetido_ignorando_caixa(com_projetos):
+    p, nova, _ = com_projetos
+    with pytest.raises(Conflito):
+        p.adicionar_projeto("PESSOAL", str(nova))
+
+
+def test_adicionar_projeto_recusa_o_nome_reservado(com_projetos):
+    """'avulso' é o nome do destino digitado na hora; deixar cadastrar um
+    projeto assim confundiria as duas coisas no histórico."""
+    p, nova, _ = com_projetos
+    with pytest.raises(EntradaInvalida) as erro:
+        p.adicionar_projeto("avulso", str(nova))
+    assert "reservado" in str(erro.value)
+
+
+@pytest.mark.parametrize("nome", ["com espaço", "acentuação", "", "-comeca-com-traco",
+                                  "barra/no/meio", "x" * 41])
+def test_adicionar_projeto_recusa_nome_malformado(com_projetos, nome):
+    p, nova, _ = com_projetos
+    with pytest.raises(EntradaInvalida):
+        p.adicionar_projeto(nome, str(nova))
+
+
+def test_remover_projeto_some_da_config_e_do_yaml(com_projetos):
+    p, _, arquivo = com_projetos
+    p.remover_projeto("pessoal")
+    assert "pessoal" not in {x["nome"] for x in p.projetos()}
+    assert "pessoal:" not in arquivo.read_text(encoding="utf-8")
+
+
+def test_remover_projeto_inexistente(com_projetos):
+    p, _, _ = com_projetos
+    with pytest.raises(NaoEncontrado):
+        p.remover_projeto("nao_existe")
+
+
+def test_remover_projeto_com_download_ativo_e_recusado(ambiente, info_dict_real):
+    """Remover o destino de um download em andamento deixaria o worker sem
+    para onde gravar, no meio da gravação."""
+    dl = DownloaderQueTrava(info_dict_real)
+    p = Pipeline(ambiente["config"], ambiente["data"], downloader=dl,
+                 detectar_ffmpeg=ffmpeg_presente)
+    try:
+        p.enfileirar([URL_REAL], perfil="edicao_1080", projeto="pessoal")
+        assert dl.entrou.wait(5), "o download não começou"
+        with pytest.raises(Conflito) as erro:
+            p.remover_projeto("pessoal")
+        assert "andamento" in str(erro.value)
+    finally:
+        dl.liberar.set()
+        p.encerrar()
+
+
+def test_remover_o_ultimo_projeto_e_recusado(com_projetos):
+    """Sem nenhum projeto o carregar_projetos levanta, e a aplicação não sobe
+    na próxima vez."""
+    p, _, _ = com_projetos
+    p.remover_projeto("pessoal")
+    with pytest.raises(EntradaInvalida) as erro:
+        p.remover_projeto("cliente_x")
+    assert "único projeto" in str(erro.value)
+    assert {x["nome"] for x in p.projetos()} == {"cliente_x"}
+
+
+def test_escolher_pasta_e_injetado(ambiente, info_dict_real):
+    """O seletor nativo nunca roda em teste: o dublê prova a ligação."""
+    p = Pipeline(ambiente["config"], ambiente["data"],
+                 downloader=DownloaderEco(info_dict_real),
+                 detectar_ffmpeg=ffmpeg_presente,
+                 escolher_pasta=lambda: "D:/FOOTAGE/escolhida")
+    try:
+        assert p.escolher_pasta() == "D:/FOOTAGE/escolhida"
+    finally:
+        p.encerrar()
+
+
+# ===========================================================================
+# Destino avulso — pasta digitada na hora, sem cadastrar projeto
+# ===========================================================================
+
+def test_pasta_avulsa_baixa_para_o_caminho_digitado(com_projetos):
+    p, nova, arquivo = com_projetos
+    antes = arquivo.read_text(encoding="utf-8")
+
+    ids = p.enfileirar([URL_REAL], perfil="edicao_1080", pasta=str(nova))
+    job = esperar_terminal(p, ids[0])
+
+    assert job["estado"] == "concluido"
+    assert Path(job["caminho_final"]).parent == nova
+    assert job["projeto"] == "avulso"
+    assert arquivo.read_text(encoding="utf-8") == antes, \
+        "destino avulso não pode gravar nada no projetos.yaml"
+
+
+def test_pasta_avulsa_entra_no_historico_com_o_caminho_exato(com_projetos):
+    p, nova, _ = com_projetos
+    ids = p.enfileirar([URL_REAL], perfil="edicao_1080", pasta=str(nova))
+    esperar_terminal(p, ids[0])
+    registro = p.historico()[0]
+    assert registro["projeto"] == "avulso"
+    assert Path(registro["caminho"]).parent == nova
+
+
+def test_pasta_avulsa_recusa_caminho_que_nao_existe(com_projetos, tmp_path):
+    p, _, _ = com_projetos
+    with pytest.raises(EntradaInvalida) as erro:
+        p.enfileirar([URL_REAL], perfil="edicao_1080",
+                     pasta=str(tmp_path / "nao_existe"))
+    assert "avulsa" in str(erro.value) and "não existe" in str(erro.value)
+
+
+def test_projeto_e_pasta_juntos_e_recusado(com_projetos):
+    p, nova, _ = com_projetos
+    with pytest.raises(EntradaInvalida) as erro:
+        p.enfileirar([URL_REAL], perfil="edicao_1080", projeto="pessoal",
+                     pasta=str(nova))
+    assert "não os dois" in str(erro.value)
+
+
+def test_sem_projeto_e_sem_pasta_e_recusado(com_projetos):
+    p, _, _ = com_projetos
+    with pytest.raises(EntradaInvalida) as erro:
+        p.enfileirar([URL_REAL], perfil="edicao_1080")
+    assert "pasta avulsa" in str(erro.value)
+
+
+def test_simular_aceita_pasta_avulsa(com_projetos):
+    p, nova, _ = com_projetos
+    item = p.simular([URL_REAL], perfil="edicao_1080", pasta=str(nova))[0]
+    assert Path(item["destino"]).parent == nova
 
 
 # ===========================================================================

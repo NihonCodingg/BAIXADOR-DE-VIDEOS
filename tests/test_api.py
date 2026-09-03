@@ -23,6 +23,8 @@ class PipelineFalso:
         self.encerrado = False
         self.erro_enfileirar = None
         self.erro_abrir = None
+        self.erro_projeto = None
+        self.pasta_escolhida = "D:/FOOTAGE/escolhida"
         self.explodir = False
 
     def inspecionar(self, texto):
@@ -32,11 +34,36 @@ class PipelineFalso:
         return [{"ok": True, "original": texto, "url": "u", "e_youtube": True,
                  "aviso": None, "video": {"titulo": "t"}, "baixados": {}}]
 
-    def enfileirar(self, urls, perfil, projeto, forcar=False):
-        self.chamadas.append(("enfileirar", list(urls), perfil, projeto, forcar))
+    def enfileirar(self, urls, perfil, projeto=None, forcar=False, pasta=None):
+        self.chamadas.append(
+            ("enfileirar", list(urls), perfil, projeto, forcar, pasta))
         if self.erro_enfileirar:
             raise self.erro_enfileirar
         return ["id-1", "id-2"][: len(urls)]
+
+    def projetos(self):
+        self.chamadas.append(("projetos",))
+        return [{"nome": "cliente_x", "rotulo": "Cliente X",
+                 "pasta": "D:/FOOTAGE/cliente_x", "valido": True, "motivo": None}]
+
+    def adicionar_projeto(self, nome, caminho, rotulo=None):
+        self.chamadas.append(("adicionar_projeto", nome, caminho, rotulo))
+        if self.erro_projeto:
+            raise self.erro_projeto
+        return {"nome": nome, "rotulo": rotulo or nome, "pasta": caminho,
+                "valido": True, "motivo": None}
+
+    def remover_projeto(self, nome):
+        self.chamadas.append(("remover_projeto", nome))
+        if self.erro_projeto:
+            raise self.erro_projeto
+        return True
+
+    def escolher_pasta(self):
+        self.chamadas.append(("escolher_pasta",))
+        if self.erro_projeto:
+            raise self.erro_projeto
+        return self.pasta_escolhida
 
     def estado_fila(self):
         self.chamadas.append(("estado_fila",))
@@ -123,13 +150,14 @@ def test_enfileirar_devolve_ids(cliente):
                                   "projeto": "pessoal"})
     assert r.status_code == 200
     assert r.json() == {"ids": ["id-1"]}
-    assert p.chamadas[-1] == ("enfileirar", ["https://youtu.be/x"], "edicao_1080", "pessoal", False)
+    assert p.chamadas[-1] == ("enfileirar", ["https://youtu.be/x"],
+                              "edicao_1080", "pessoal", False, None)
 
 
 def test_enfileirar_repassa_forcar(cliente):
     c, p = cliente
     c.post("/api/fila", json={"urls": ["u"], "perfil": "p", "projeto": "j", "forcar": True})
-    assert p.chamadas[-1][-1] is True
+    assert p.chamadas[-1] == ("enfileirar", ["u"], "p", "j", True, None)
 
 
 def test_enfileirar_entrada_invalida_e_400(cliente):
@@ -150,7 +178,7 @@ def test_enfileirar_conflito_e_409(cliente):
 
 @pytest.mark.parametrize("corpo", [
     {}, {"urls": "nao-e-lista", "perfil": "p", "projeto": "j"},
-    {"urls": ["u"], "perfil": "p"}, {"urls": ["u"], "projeto": "j"},
+    {"urls": ["u"], "projeto": "j"},
 ])
 def test_enfileirar_corpo_malformado_e_422(cliente, corpo):
     c, _ = cliente
@@ -162,6 +190,25 @@ def test_enfileirar_corpo_malformado_e_422(cliente, corpo):
 # ===========================================================================
 # GET /api/fila  e  DELETE /api/fila/{id}
 # ===========================================================================
+
+def test_sem_projeto_e_sem_pasta_e_400_nao_422(cliente):
+    """Com a pasta avulsa, `projeto` deixou de ser obrigatório no schema.
+    Faltar os dois passou a ser regra de negócio — 400, com mensagem — e não
+    mais erro de forma."""
+    c, p = cliente
+    p.erro_enfileirar = EntradaInvalida(
+        "Informe o projeto de destino, ou uma pasta avulsa.")
+    r = c.post("/api/fila", json={"urls": ["u"], "perfil": "p"})
+    assert r.status_code == 400
+    assert "pasta avulsa" in r.json()["erro"]
+
+
+def test_fila_repassa_a_pasta_avulsa(cliente):
+    c, p = cliente
+    c.post("/api/fila", json={"urls": ["u"], "perfil": "p",
+                              "pasta": "D:/FOOTAGE/avulsa"})
+    assert ("enfileirar", ["u"], "p", None, False, "D:/FOOTAGE/avulsa") in p.chamadas
+
 
 def test_estado_da_fila(cliente):
     c, _ = cliente
@@ -274,6 +321,101 @@ def test_encerra_o_pipeline_ao_desligar(web):
     with TestClient(app):
         assert pipeline.encerrado is False
     assert pipeline.encerrado is True
+
+
+# ===========================================================================
+# Projetos pela tela
+# ===========================================================================
+
+def test_lista_projetos(cliente):
+    c, _ = cliente
+    r = c.get("/api/projetos")
+    assert r.status_code == 200
+    assert r.json()["projetos"][0]["nome"] == "cliente_x"
+
+
+def test_adiciona_projeto(cliente):
+    c, p = cliente
+    r = c.post("/api/projetos", json={"nome": "novo", "caminho": "D:/FOOTAGE/novo",
+                                      "rotulo": "Cliente Novo"})
+    assert r.status_code == 200
+    assert r.json()["projeto"]["nome"] == "novo"
+    assert ("adicionar_projeto", "novo", "D:/FOOTAGE/novo", "Cliente Novo") in p.chamadas
+
+
+def test_adiciona_projeto_sem_rotulo(cliente):
+    c, p = cliente
+    c.post("/api/projetos", json={"nome": "novo", "caminho": "D:/FOOTAGE/novo"})
+    assert ("adicionar_projeto", "novo", "D:/FOOTAGE/novo", None) in p.chamadas
+
+
+def test_adiciona_projeto_com_pasta_ruim_e_400(cliente):
+    c, p = cliente
+    p.erro_projeto = EntradaInvalida("Pasta inválida: a pasta não existe: D:/nao")
+    r = c.post("/api/projetos", json={"nome": "novo", "caminho": "D:/nao"})
+    assert r.status_code == 400
+    assert "não existe" in r.json()["erro"]
+
+
+def test_adiciona_projeto_com_nome_repetido_e_409(cliente):
+    c, p = cliente
+    p.erro_projeto = Conflito("Já existe um projeto chamado 'cliente_x'.")
+    r = c.post("/api/projetos", json={"nome": "cliente_x", "caminho": "D:/x"})
+    assert r.status_code == 409
+
+
+def test_adiciona_projeto_sem_caminho_e_422(cliente):
+    c, _ = cliente
+    r = c.post("/api/projetos", json={"nome": "novo"})
+    assert r.status_code == 422
+
+
+def test_remove_projeto(cliente):
+    c, p = cliente
+    r = c.delete("/api/projetos/cliente_x")
+    assert r.status_code == 200 and r.json() == {"removido": True}
+    assert ("remover_projeto", "cliente_x") in p.chamadas
+
+
+def test_remove_projeto_inexistente_e_404(cliente):
+    c, p = cliente
+    p.erro_projeto = NaoEncontrado("Projeto 'nao_existe' não existe.")
+    assert c.delete("/api/projetos/nao_existe").status_code == 404
+
+
+def test_remove_projeto_com_download_ativo_e_409(cliente):
+    c, p = cliente
+    p.erro_projeto = Conflito("O projeto 'cliente_x' tem download em andamento.")
+    assert c.delete("/api/projetos/cliente_x").status_code == 409
+
+
+# ===========================================================================
+# POST /api/escolher-pasta
+# ===========================================================================
+
+def test_escolher_pasta_devolve_o_caminho(cliente):
+    c, p = cliente
+    r = c.post("/api/escolher-pasta")
+    assert r.status_code == 200
+    assert r.json() == {"caminho": "D:/FOOTAGE/escolhida"}
+    assert ("escolher_pasta",) in p.chamadas
+
+
+def test_escolher_pasta_cancelado_devolve_nulo(cliente):
+    """Cancelar não é erro: a tela só não preenche o campo."""
+    c, p = cliente
+    p.pasta_escolhida = None
+    r = c.post("/api/escolher-pasta")
+    assert r.status_code == 200 and r.json() == {"caminho": None}
+
+
+def test_escolher_pasta_indisponivel_e_400(cliente):
+    c, p = cliente
+    p.erro_projeto = EntradaInvalida(
+        "O seletor de pasta ficou aberto tempo demais e foi fechado.")
+    r = c.post("/api/escolher-pasta")
+    assert r.status_code == 400
+    assert "tempo demais" in r.json()["erro"]
 
 
 # ===========================================================================

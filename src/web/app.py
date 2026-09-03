@@ -43,8 +43,17 @@ class CorpoInspecionar(BaseModel):
 class CorpoFila(BaseModel):
     urls: list[str]
     perfil: str
-    projeto: str
+    # Um OU outro: projeto cadastrado, ou pasta avulsa digitada na hora. Qual
+    # dos dois falta é regra de negócio, e vira 400 no pipeline — não 422.
+    projeto: str | None = None
+    pasta: str | None = None
     forcar: bool = False            # rebaixar um vídeo já concluído neste perfil
+
+
+class CorpoProjeto(BaseModel):
+    nome: str                       # identificador: letras, números, - e _
+    caminho: str                    # pasta existente e gravável
+    rotulo: str | None = None       # texto para a tela; o nome, se ausente
 
 
 class CorpoAbrirPasta(BaseModel):
@@ -103,7 +112,8 @@ def criar_app(pipeline, pasta_web: Path | None = None) -> FastAPI:
 
     @app.post("/api/fila")
     def enfileirar(corpo: CorpoFila):
-        ids = pipeline.enfileirar(corpo.urls, corpo.perfil, corpo.projeto, corpo.forcar)
+        ids = pipeline.enfileirar(corpo.urls, corpo.perfil, corpo.projeto,
+                                  corpo.forcar, corpo.pasta)
         return {"ids": ids}
 
     @app.get("/api/fila")
@@ -119,6 +129,27 @@ def criar_app(pipeline, pasta_web: Path | None = None) -> FastAPI:
     def historico(termo: str | None = None, projeto: str | None = None,
                   limite: int = Query(100, ge=1, le=1000)):
         return {"registros": pipeline.historico(termo, projeto, limite)}
+
+    @app.get("/api/projetos")
+    def listar_projetos():
+        return {"projetos": pipeline.projetos()}
+
+    @app.post("/api/projetos")
+    def adicionar_projeto(corpo: CorpoProjeto):
+        """Cadastra e grava no config/projetos.yaml, preservando comentários."""
+        return {"projeto": pipeline.adicionar_projeto(
+            corpo.nome, corpo.caminho, corpo.rotulo)}
+
+    @app.delete("/api/projetos/{nome}")
+    def remover_projeto(nome: str):
+        pipeline.remover_projeto(nome)
+        return {"removido": True}
+
+    @app.post("/api/escolher-pasta")
+    def escolher_pasta():
+        """Abre o seletor NATIVO na máquina do servidor — que é a mesma do
+        navegador, por vincular em 127.0.0.1. `caminho` nulo = cancelado."""
+        return {"caminho": pipeline.escolher_pasta()}
 
     @app.post("/api/abrir-pasta")
     def abrir_pasta(corpo: CorpoAbrirPasta):
