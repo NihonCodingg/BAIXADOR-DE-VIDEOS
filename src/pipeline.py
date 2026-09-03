@@ -340,6 +340,10 @@ class Pipeline:
             "id": job.id,
             "estado": job.estado.value,
             "ja_existia": job.ja_existia,
+            # A url vive no job para "tentar de novo" sobreviver a um reload:
+            # sem ela a tela só saberia refazer o download enquanto a aba que
+            # enfileirou continuasse aberta.
+            "url": job.url_original or job.video.url_canonica,
             "perfil": job.perfil,
             "projeto": job.projeto,
             "criado_em": job.criado_em.isoformat(timespec="seconds"),

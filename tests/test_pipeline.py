@@ -649,3 +649,13 @@ def test_estado_fila_expoe_ja_existia(subir):
     j = esperar_terminal(p, ids[0])
     assert j["ja_existia"] is False
     assert "aviso" in j
+
+
+def test_estado_fila_expoe_a_url_colada(subir):
+    """Sem a url no job, "tentar de novo" morre no primeiro F5: a tela só
+    saberia refazer o download enquanto a aba que enfileirou continuasse
+    aberta. É a url ORIGINAL, não a canônica — é o que o usuário colou."""
+    p, _ = subir()
+    ids = p.enfileirar([URL_REAL], perfil="edicao_1080", projeto="pessoal")
+    j = next(x for x in p.estado_fila() if x["id"] == ids[0])
+    assert j["url"] == URL_REAL
