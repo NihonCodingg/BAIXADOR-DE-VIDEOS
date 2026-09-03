@@ -12,6 +12,9 @@ stack trace (restrição técnica 2).
 Ticket: T6.
 """
 
+import sys
+import threading
+import webbrowser
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -29,6 +32,8 @@ RAIZ = Path(__file__).resolve().parent.parent.parent
 PASTA_WEB = RAIZ / "web"
 HOST = "127.0.0.1"
 PORTA = 8000
+ENDERECO = f"http://{HOST}:{PORTA}"
+ESPERA_NAVEGADOR = 1.0          # segundos até o uvicorn estar ouvindo
 
 
 class CorpoInspecionar(BaseModel):
@@ -121,10 +126,26 @@ def criar_app(pipeline, pasta_web: Path | None = None) -> FastAPI:
     return app
 
 
-def main() -> None:
-    """Sobe o Pipeline real e o uvicorn em 127.0.0.1."""
+def main(abrir_navegador=webbrowser.open) -> None:
+    """Sobe o Pipeline real, o uvicorn em 127.0.0.1 e a página no navegador.
+
+    O navegador abre por um Timer porque `uvicorn.run` bloqueia: abrir antes
+    daria uma aba na porta ainda fechada. O `cancel` no finally garante que
+    nada abre se o servidor morrer na subida — por porta ocupada, por
+    exemplo.
+
+    RESEARCH 7: o console do Windows é cp1252, e uma mensagem de erro com
+    título de vídeo derrubaria o processo na hora de imprimir.
+    """
+    sys.stdout.reconfigure(encoding="utf-8")
     pipeline = Pipeline(RAIZ / "config", RAIZ / "data")
+    print(f"Baixador de Footage em {ENDERECO} — Ctrl+C para encerrar.")
+
+    temporizador = threading.Timer(ESPERA_NAVEGADOR, abrir_navegador, (ENDERECO,))
+    temporizador.daemon = True
+    temporizador.start()
     try:
         uvicorn.run(criar_app(pipeline), host=HOST, port=PORTA, log_level="warning")
     finally:
+        temporizador.cancel()
         pipeline.encerrar()

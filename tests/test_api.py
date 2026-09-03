@@ -12,7 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from src.pipeline import Conflito, EntradaInvalida, NaoEncontrado
-from src.web.app import HOST, criar_app
+from src.web.app import HOST, PASTA_WEB, criar_app
 
 
 class PipelineFalso:
@@ -270,11 +270,103 @@ def test_encerra_o_pipeline_ao_desligar(web):
 
 
 # ===========================================================================
+# Estáticos — a pasta web/ de verdade, a que vai para o usuário
+# ===========================================================================
+
+def test_serve_os_arquivos_reais_da_pasta_web():
+    """Os testes de estáticos acima usam uma pasta de mentira. Este confere a
+    pasta web/ do repositório: sem ela servida, `python -m src.web` abre o
+    navegador numa página em branco."""
+    app = criar_app(PipelineFalso())          # sem pasta_web: usa a real
+    with TestClient(app) as c:
+        raiz = c.get("/")
+        assert raiz.status_code == 200
+        assert "<title>" in raiz.text
+
+        for arquivo, tipo in (("/app.js", "javascript"), ("/style.css", "css")):
+            r = c.get(arquivo)
+            assert r.status_code == 200, f"{arquivo} não é servido"
+            assert tipo in r.headers["content-type"], arquivo
+
+
+def test_o_front_nao_tem_fonte_de_dados_alem_da_api():
+    """T7: o app.js chegou do desenho com um servidor de demonstração que
+    substituía a API em silêncio quando ela não respondia — a tela mostrava
+    downloads e histórico que nunca existiram, sem dizer nada. Isso não pode
+    voltar: quando a API não responde, a tela avisa e fica vazia."""
+    js = (PASTA_WEB / "app.js").read_text(encoding="utf-8")
+    assert "fetch(" in js, "sanidade: é este o arquivo que fala com a API"
+    assert "DEMO" not in js.upper(), "voltou um modo de demonstração no front"
+
+
+# ===========================================================================
 # main() — vincula em 127.0.0.1
 # ===========================================================================
 
 def test_host_e_loopback():
     assert HOST == "127.0.0.1"
+
+
+class TimerFalso:
+    """Registra o agendamento em vez de abrir navegador durante o teste."""
+
+    criados: list["TimerFalso"] = []
+
+    def __init__(self, atraso, funcao, args=()):
+        self.atraso, self.funcao, self.args = atraso, funcao, args
+        self.iniciado = self.cancelado = False
+        TimerFalso.criados.append(self)
+
+    def start(self):
+        self.iniciado = True
+
+    def cancel(self):
+        self.cancelado = True
+
+
+def test_main_abre_a_pagina_no_navegador(monkeypatch, web):
+    """`python -m src.web` abre a página sozinho: o usuário roda um comando,
+    não dois. O Timer existe porque uvicorn.run bloqueia — e é cancelado no
+    fim para não abrir aba nenhuma se o servidor não subir."""
+    import src.web.app as app_mod
+
+    TimerFalso.criados.clear()
+    aberto = []
+    monkeypatch.setattr(app_mod, "Pipeline", lambda *a, **k: PipelineFalso())
+    monkeypatch.setattr(app_mod.uvicorn, "run", lambda app, **kw: None)
+    monkeypatch.setattr(app_mod.threading, "Timer", TimerFalso)
+
+    def registrar(url):
+        aberto.append(url)
+
+    app_mod.main(abrir_navegador=registrar)
+
+    assert len(TimerFalso.criados) == 1
+    agendado = TimerFalso.criados[0]
+    assert agendado.funcao is registrar
+    assert agendado.args == ("http://127.0.0.1:8000",)
+    assert agendado.iniciado and agendado.cancelado
+    assert aberto == [], "o dublê não dispara: quem abre é o Timer real"
+
+
+def test_main_nao_abre_navegador_se_o_servidor_morre(monkeypatch, web):
+    """Porta ocupada: o uvicorn levanta, e nenhuma aba deve abrir."""
+    import src.web.app as app_mod
+
+    TimerFalso.criados.clear()
+    pipeline = PipelineFalso()
+    monkeypatch.setattr(app_mod, "Pipeline", lambda *a, **k: pipeline)
+    monkeypatch.setattr(app_mod.threading, "Timer", TimerFalso)
+
+    def explodir(app, **kw):
+        raise OSError("porta 8000 já está em uso")
+
+    monkeypatch.setattr(app_mod.uvicorn, "run", explodir)
+    with pytest.raises(OSError):
+        app_mod.main(abrir_navegador=lambda url: None)
+
+    assert TimerFalso.criados[0].cancelado
+    assert pipeline.encerrado is True
 
 
 def test_main_sobe_em_loopback_e_encerra_o_pipeline(monkeypatch, web):
