@@ -26,13 +26,14 @@ from .domain.perfis import carregar_perfis, disponivel, opcoes_ytdlp
 from .domain.projetos import (NOME_AVULSO, Projeto, carregar_projetos,
                               validar_nome)
 from .domain.validacao import normalizar_link, normalizar_lote
-from .download.adapter import Downloader, validar_seletor
+from .download.adapter import (NAVEGADORES, Downloader, testar_cookies,
+                               validar_seletor)
 from .download.ffmpeg import detectar
 from .download.traducao_erros import ErroDeDownload
 from .queue.fila import Fila
 from .queue.worker import Preparacao, Worker
 from .storage.historico import Historico
-from .storage import projetos_yaml
+from .storage import cookies_yaml, projetos_yaml
 
 _ATIVOS = (EstadoJob.NA_FILA, EstadoJob.BAIXANDO)
 
@@ -121,16 +122,31 @@ class Pipeline:
     def __init__(self, config_dir: Path, data_dir: Path, *,
                  downloader=None, detectar_ffmpeg: Callable | None = None,
                  abrir_no_explorador: Callable[[str], None] | None = None,
-                 escolher_pasta: Callable[[], str | None] | None = None):
+                 escolher_pasta: Callable[[], str | None] | None = None,
+                 testar_cookies_de: Callable[..., str | None] | None = None):
         """Carrega perfis e projetos, detecta o ffmpeg, abre o histórico e
         reconcilia os interrompidos (SPEC 10.1), sobe o worker."""
         self._config_dir = Path(config_dir)
         self._data_dir = Path(data_dir)
-        self._downloader = downloader or Downloader()
+        # Cookies ANTES do downloader: é ele que carrega a opção.
+        self._cookies_nav, self._cookies_perfil = cookies_yaml.ler(
+            self._config_dir / "cookies.yaml")
+        self._cookies_motivo = None
+        if self._cookies_nav and self._cookies_nav not in NAVEGADORES:
+            # Não estoura: cookies são acessório. Fica desligado, e a tela
+            # mostra por quê.
+            self._cookies_motivo = (
+                f"O navegador {self._cookies_nav!r} do config/cookies.yaml não é "
+                f"suportado pelo yt-dlp. Cookies desligados.")
+            self._cookies_nav = None
+
+        self._downloader = downloader or Downloader(
+            cookies=(self._cookies_nav, self._cookies_perfil))
         self._ffmpeg = (detectar_ffmpeg or detectar)()
         # Injetados para o teste não abrir janela nenhuma.
         self._abrir = abrir_no_explorador or abrir_no_sistema
         self._escolher_pasta = escolher_pasta or escolher_pasta_no_sistema
+        self._testar_cookies = testar_cookies_de or testar_cookies
 
         self._perfis = carregar_perfis(
             self._ler_yaml("perfis.yaml"), validar_seletor=validar_seletor)
@@ -700,8 +716,65 @@ class Pipeline:
         self._abrir(str(pasta))
         return str(pasta)
 
+    # ---------------------------------------------------------- cookies
+
+    def cookies(self) -> dict:
+        """O que a tela precisa para mostrar e mudar a opção."""
+        return {
+            "navegador": self._cookies_nav,
+            "perfil": self._cookies_perfil,
+            "ativo": bool(self._cookies_nav),
+            "motivo": self._cookies_motivo,
+            "navegadores": list(NAVEGADORES),
+        }
+
+    def definir_cookies(self, navegador: str | None,
+                        perfil: str | None = None) -> dict:
+        """Liga ou desliga os cookies do navegador e grava no YAML.
+
+        Validar o nome AQUI, contra a lista do yt-dlp instalado, é o que faz a
+        falha aparecer na hora de escolher em vez de no meio de um download.
+        """
+        navegador = (navegador or "").strip().lower() or None
+        perfil = (perfil or "").strip() or None
+        if navegador and navegador not in NAVEGADORES:
+            raise EntradaInvalida(
+                f"Navegador {navegador!r} não é suportado pelo yt-dlp. "
+                f"Escolha um de: {', '.join(NAVEGADORES)}.")
+
+        # Lê os cookies AGORA. Sem isto, a falha só apareceria no meio do
+        # próximo download — e chegaria lá como "failed to load cookies", sem
+        # a causa, porque o yt-dlp descarta a mensagem original no caminho
+        # normal.
+        if navegador:
+            detalhe = self._testar_cookies(navegador, perfil)
+            if detalhe:
+                raise EntradaInvalida(
+                    f"Não foi possível ler os cookies do {navegador}. "
+                    f"Feche o navegador e tente de novo; se ele nem estiver "
+                    f"instalado, escolha outro. Detalhe do yt-dlp: {detalhe}")
+
+        try:
+            cookies_yaml.escrever(self._config_dir / "cookies.yaml",
+                                  navegador, perfil, list(NAVEGADORES))
+        except OSError as erro:
+            raise EntradaInvalida(
+                f"Não foi possível gravar em cookies.yaml: {erro}") from erro
+
+        self._cookies_nav = navegador
+        self._cookies_perfil = perfil if navegador else None
+        self._cookies_motivo = None
+        if hasattr(self._downloader, "definir_cookies"):
+            self._downloader.definir_cookies(
+                (self._cookies_nav, self._cookies_perfil))
+        # O cache de inspeção guarda metadados obtidos SEM cookies; depois de
+        # ligar, uma nova inspeção precisa de fato ir ao site de novo.
+        with self._cache_lock:
+            self._videos.clear()
+        return self.cookies()
+
     def config(self) -> dict:
-        """Perfis, projetos e status do ffmpeg. Alimenta GET /api/config."""
+        """Perfis, projetos, ffmpeg e cookies. Alimenta GET /api/config."""
         return {
             "ffmpeg": {
                 "disponivel": self._ffmpeg.disponivel,
@@ -721,6 +794,7 @@ class Pipeline:
                 for p in self._perfis.values()
             ],
             "projetos": self.projetos(),
+            "cookies": self.cookies(),
         }
 
     # ------------------------------------------------------------ fim

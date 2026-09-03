@@ -41,6 +41,19 @@ class PipelineFalso:
             raise self.erro_enfileirar
         return ["id-1", "id-2"][: len(urls)]
 
+    def cookies(self):
+        self.chamadas.append(("cookies",))
+        return {"navegador": None, "perfil": None, "ativo": False,
+                "motivo": None, "navegadores": ["chrome", "firefox"]}
+
+    def definir_cookies(self, navegador, perfil=None):
+        self.chamadas.append(("definir_cookies", navegador, perfil))
+        if self.erro_projeto:
+            raise self.erro_projeto
+        return {"navegador": navegador, "perfil": perfil,
+                "ativo": bool(navegador), "motivo": None,
+                "navegadores": ["chrome", "firefox"]}
+
     def projetos(self):
         self.chamadas.append(("projetos",))
         return [{"nome": "cliente_x", "rotulo": "Cliente X",
@@ -321,6 +334,39 @@ def test_encerra_o_pipeline_ao_desligar(web):
     with TestClient(app):
         assert pipeline.encerrado is False
     assert pipeline.encerrado is True
+
+
+# ===========================================================================
+# POST /api/cookies
+# ===========================================================================
+
+def test_liga_cookies(cliente):
+    c, p = cliente
+    r = c.post("/api/cookies", json={"navegador": "firefox", "perfil": "default"})
+    assert r.status_code == 200
+    assert r.json()["cookies"]["ativo"] is True
+    assert ("definir_cookies", "firefox", "default") in p.chamadas
+
+
+def test_desliga_cookies_com_navegador_nulo(cliente):
+    c, p = cliente
+    r = c.post("/api/cookies", json={"navegador": None})
+    assert r.status_code == 200
+    assert r.json()["cookies"]["ativo"] is False
+
+
+def test_corpo_vazio_desliga_em_vez_de_422(cliente):
+    """Os dois campos são opcionais: corpo vazio quer dizer desligado."""
+    assert cliente[0].post("/api/cookies", json={}).status_code == 200
+
+
+def test_navegador_invalido_e_400(cliente):
+    c, p = cliente
+    p.erro_projeto = EntradaInvalida(
+        "Navegador 'netscape' não é suportado pelo yt-dlp.")
+    r = c.post("/api/cookies", json={"navegador": "netscape"})
+    assert r.status_code == 400
+    assert "não é suportado" in r.json()["erro"]
 
 
 # ===========================================================================

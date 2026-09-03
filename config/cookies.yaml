@@ -1,0 +1,27 @@
+# De onde tirar os cookies do navegador (o --cookies-from-browser do yt-dlp).
+#
+# ATENÇÃO: este arquivo é REESCRITO quando a opção é mudada pela tela, em
+# Ajustes. Comentários que você acrescentar aqui não sobrevivem — ao
+# contrário do projetos.yaml, que é editado preservando os seus.
+#
+# DESATIVADO POR PADRÃO. Ative só quando o YouTube começar a pedir
+# confirmação de que você não é um robô: aí a ferramenta passa a usar a
+# sessão que você já tem aberta no navegador, e o site para de pedir.
+#
+# navegador: null desativa. Aceita, conferido contra o yt-dlp na subida:
+#   brave, chrome, chromium, edge, firefox, opera, safari, vivaldi, whale
+#
+# perfil: opcional. Nome ou caminho do perfil do navegador; null usa o padrão.
+#
+# NO WINDOWS, com Chrome e derivados, dois problemas medidos:
+#
+#   1. Com o navegador ABERTO o arquivo de cookies fica travado, e o yt-dlp
+#      falha com "Could not copy Chrome cookie database". Feche antes.
+#   2. O Chrome 127+ cifra os cookies com App-Bound Encryption, e a leitura
+#      pode falhar mesmo com ele fechado ("Failed to decrypt with DPAPI").
+#
+# O Firefox não tem nenhum dos dois. Se for usar cookies no Windows, ele é a
+# escolha menos problemática.
+
+navegador: null
+perfil: null

@@ -10,9 +10,14 @@ Ticket: T1.
 from collections.abc import Callable
 
 import yt_dlp
+import yt_dlp.cookies
 
 from ..domain.erros import MotivoFalha
 from .traducao_erros import Classificacao, ErroDeDownload, traduzir
+
+# A lista vem do próprio yt-dlp instalado, não de uma cópia nossa: quando ele
+# ganhar ou perder um navegador, a validação acompanha sozinha.
+NAVEGADORES = tuple(sorted(yt_dlp.cookies.SUPPORTED_BROWSERS))
 
 
 def _caminho_final(info: dict) -> str | None:
@@ -37,8 +42,42 @@ class Downloader:
     vez de import direto no método, para o adapter ser testável sem rede.
     """
 
-    def __init__(self, fabrica_ydl=None):
+    def __init__(self, fabrica_ydl=None, cookies=None):
         self._fabrica = fabrica_ydl or yt_dlp.YoutubeDL
+        self._cookies = None
+        self.definir_cookies(cookies)
+
+    def definir_cookies(self, navegador_e_perfil) -> None:
+        """Liga ou desliga o --cookies-from-browser. `None` desliga.
+
+        Aceita a tupla (navegador, perfil) que o pipeline lê da config. A
+        troca vale para o PRÓXIMO download: o valor é lido a cada chamada, e
+        não há estado do yt-dlp preso entre elas.
+        """
+        if not navegador_e_perfil:
+            self._cookies = None
+            return
+        navegador, perfil = navegador_e_perfil
+        if not navegador:
+            self._cookies = None
+            return
+        # A tupla do yt-dlp é (navegador, perfil, keyring, container); os dois
+        # últimos ficam de fora porque não têm uso aqui.
+        self._cookies = (navegador, perfil) if perfil else (navegador,)
+
+    @property
+    def cookies(self):
+        return self._cookies
+
+    def _com_cookies(self, opcoes: dict) -> dict:
+        """Acrescenta o cookiesfrombrowser, quando ligado.
+
+        Vai nas DUAS chamadas: o bloqueio antibot acontece já na inspeção,
+        antes de qualquer download.
+        """
+        if self._cookies:
+            opcoes["cookiesfrombrowser"] = self._cookies
+        return opcoes
 
     def inspecionar(self, url: str) -> dict:
         """extract_info(download=False) + sanitize_info.
@@ -59,7 +98,7 @@ class Downloader:
         try:
             # `with` fecha o cache de conexões ao sair. Sem ele, sockets ficam
             # abertos num worker de longa duração (RESEARCH 1.1).
-            with self._fabrica(opcoes) as ydl:
+            with self._fabrica(self._com_cookies(opcoes)) as ydl:
                 bruto = ydl.extract_info(url, download=False)
                 # Sem sanitize_info o resultado não é serializável em JSON
                 # (RESEARCH 1.3), e a API devolve JSON.
@@ -105,7 +144,7 @@ class Downloader:
             efetivas["outtmpl"] = efetivas["outtmpl"].replace("%", "%%")
 
         try:
-            with self._fabrica(efetivas) as ydl:
+            with self._fabrica(self._com_cookies(efetivas)) as ydl:
                 info = ydl.extract_info(url, download=True)
         except ErroDeDownload:
             raise
@@ -121,6 +160,25 @@ class Downloader:
                 "o yt-dlp concluiu sem informar o caminho do arquivo baixado",
             ))
         return str(caminho)
+
+
+def testar_cookies(navegador: str, perfil: str | None = None) -> str | None:
+    """Tenta LER os cookies agora. None se deu certo, o detalhe se não deu.
+
+    Existe porque o yt-dlp, no caminho normal, embrulha toda falha de cookie
+    em CookieLoadError('failed to load cookies') e joga fora a causa
+    (cookies.py:113). Chamando o extrator direto, a causa real aparece: banco
+    não encontrado, navegador aberto travando o arquivo, ou App-Bound
+    Encryption do Chrome 127+ no Windows.
+
+    Fica no adapter porque é o único módulo que conhece o yt-dlp (REGRA 1).
+    """
+    try:
+        yt_dlp.cookies.extract_cookies_from_browser(navegador, perfil)
+    except Exception as erro:              # noqa: BLE001 — qualquer falha
+        texto = str(erro).strip() or type(erro).__name__
+        return texto.split("\n")[0][:300]
+    return None
 
 
 def validar_seletor(seletor: str) -> None:

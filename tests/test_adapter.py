@@ -243,3 +243,55 @@ def test_validar_seletor_recusa_colchete_desbalanceado():
 def test_validar_seletor_nao_precisa_de_rede():
     """Só analisa a string: roda em milissegundos e sem sockets."""
     validar_seletor("ba/b")
+
+
+# ===========================================================================
+# Cookies do navegador
+# ===========================================================================
+
+def test_sem_cookies_por_padrao():
+    """Desligado por padrão: ler cookie de navegador é intrusivo, e a
+    maioria dos downloads não precisa."""
+    YDL = fabrica(info={})
+    d = Downloader(fabrica_ydl=YDL)
+    d.inspecionar(URL)
+    assert "cookiesfrombrowser" not in YDL.instancias[-1].opcoes
+    assert d.cookies is None
+
+
+def test_cookies_vao_para_a_inspecao():
+    """O bloqueio antibot acontece já na inspeção, antes de baixar: os
+    cookies precisam ir nas duas chamadas."""
+    YDL = fabrica(info={})
+    Downloader(fabrica_ydl=YDL, cookies=("firefox", None)).inspecionar(URL)
+    assert YDL.instancias[-1].opcoes["cookiesfrombrowser"] == ("firefox",)
+
+
+def test_cookies_vao_para_o_download():
+    YDL = fabrica(info={"filepath": "C:/f/v.mp4"})
+    d = Downloader(fabrica_ydl=YDL, cookies=("chrome", "Default"))
+    d.baixar(URL, {"outtmpl": "C:/f/v.mp4"}, lambda x: None)
+    assert YDL.instancias[-1].opcoes["cookiesfrombrowser"] == ("chrome", "Default")
+
+
+def test_perfil_vazio_nao_entra_na_tupla():
+    d = Downloader(fabrica_ydl=fabrica(info={}), cookies=("edge", None))
+    assert d.cookies == ("edge",)
+
+
+def test_desligar_cookies_em_tempo_de_execucao():
+    """Mudar a opção pela tela vale para o próximo download, sem reiniciar."""
+    YDL = fabrica(info={})
+    d = Downloader(fabrica_ydl=YDL, cookies=("firefox", None))
+    d.definir_cookies(None)
+    d.inspecionar(URL)
+    assert "cookiesfrombrowser" not in YDL.instancias[-1].opcoes
+
+
+def test_a_lista_de_navegadores_vem_do_ytdlp():
+    """Copiar a lista para cá deixaria a validação desatualizar em silêncio
+    quando o yt-dlp mudar."""
+    import yt_dlp.cookies
+    from src.download.adapter import NAVEGADORES
+    assert set(NAVEGADORES) == set(yt_dlp.cookies.SUPPORTED_BROWSERS)
+    assert "firefox" in NAVEGADORES and "chrome" in NAVEGADORES

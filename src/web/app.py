@@ -50,6 +50,11 @@ class CorpoFila(BaseModel):
     forcar: bool = False            # rebaixar um vídeo já concluído neste perfil
 
 
+class CorpoCookies(BaseModel):
+    navegador: str | None = None    # None ou "" desliga
+    perfil: str | None = None
+
+
 class CorpoProjeto(BaseModel):
     nome: str                       # identificador: letras, números, - e _
     caminho: str                    # pasta existente e gravável
@@ -129,6 +134,11 @@ def criar_app(pipeline, pasta_web: Path | None = None) -> FastAPI:
     def historico(termo: str | None = None, projeto: str | None = None,
                   limite: int = Query(100, ge=1, le=1000)):
         return {"registros": pipeline.historico(termo, projeto, limite)}
+
+    @app.post("/api/cookies")
+    def definir_cookies(corpo: CorpoCookies):
+        """Liga ou desliga o --cookies-from-browser e grava no YAML."""
+        return {"cookies": pipeline.definir_cookies(corpo.navegador, corpo.perfil)}
 
     @app.get("/api/projetos")
     def listar_projetos():

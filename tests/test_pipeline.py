@@ -653,6 +653,152 @@ def test_estado_fila_expoe_ja_existia(subir):
 
 
 # ===========================================================================
+# Cookies do navegador
+# ===========================================================================
+
+def test_cookies_desligados_por_padrao(subir):
+    p, _ = subir()
+    c = p.cookies()
+    assert c["ativo"] is False and c["navegador"] is None
+    assert "firefox" in c["navegadores"], "a lista vem do yt-dlp instalado"
+
+
+def test_config_expoe_os_cookies(subir):
+    p, _ = subir()
+    assert p.config()["cookies"]["ativo"] is False
+
+
+def cookies_legiveis(navegador, perfil=None):
+    """Dublê da leitura de cookies: nenhum teste abre o navegador do autor,
+    e a lista de navegadores instalados varia de máquina para máquina."""
+    return None
+
+
+def test_ligar_cookies_grava_no_yaml_e_no_downloader(ambiente, info_dict_real):
+    from src.download.adapter import Downloader
+    dl = Downloader(fabrica_ydl=lambda o: None)
+    p = Pipeline(ambiente["config"], ambiente["data"], downloader=dl,
+                 detectar_ffmpeg=ffmpeg_presente,
+                 testar_cookies_de=cookies_legiveis)
+    try:
+        resultado = p.definir_cookies("firefox", "default")
+        assert resultado["ativo"] is True
+        assert dl.cookies == ("firefox", "default")
+        texto = (ambiente["config"] / "cookies.yaml").read_text(encoding="utf-8")
+        assert "firefox" in texto
+    finally:
+        p.encerrar()
+
+
+def test_desligar_cookies(ambiente, info_dict_real):
+    from src.download.adapter import Downloader
+    dl = Downloader(fabrica_ydl=lambda o: None)
+    p = Pipeline(ambiente["config"], ambiente["data"], downloader=dl,
+                 detectar_ffmpeg=ffmpeg_presente,
+                 testar_cookies_de=cookies_legiveis)
+    try:
+        p.definir_cookies("firefox")
+        assert p.definir_cookies(None)["ativo"] is False
+        assert dl.cookies is None
+    finally:
+        p.encerrar()
+
+
+def test_navegador_ilegivel_e_recusado_com_a_causa(ambiente, info_dict_real):
+    """O yt-dlp embrulha toda falha de cookie em "failed to load cookies" e
+    joga a causa fora. Testar a leitura na hora de ESCOLHER é o que preserva a
+    causa — e evita ligar uma opção que só falharia no meio do download."""
+    def ilegivel(navegador, perfil=None):
+        return "Failed to decrypt with DPAPI. See  https://...  for more info"
+
+    p = Pipeline(ambiente["config"], ambiente["data"],
+                 downloader=DownloaderEco(info_dict_real),
+                 detectar_ffmpeg=ffmpeg_presente, testar_cookies_de=ilegivel)
+    try:
+        with pytest.raises(EntradaInvalida) as erro:
+            p.definir_cookies("edge")
+        assert "DPAPI" in str(erro.value), "a causa real tem que chegar ao usuário"
+        assert "Feche o navegador" in str(erro.value)
+        assert p.cookies()["ativo"] is False, "não pode ter ligado"
+        assert not (ambiente["config"] / "cookies.yaml").exists(), \
+            "não pode ter gravado"
+    finally:
+        p.encerrar()
+
+
+def test_desligar_nao_testa_leitura(ambiente, info_dict_real):
+    """Desligar tem que funcionar mesmo com o navegador quebrado — é
+    justamente a saída de quem ligou e se arrependeu."""
+    def sempre_falha(navegador, perfil=None):
+        return "qualquer coisa"
+
+    p = Pipeline(ambiente["config"], ambiente["data"],
+                 downloader=DownloaderEco(info_dict_real),
+                 detectar_ffmpeg=ffmpeg_presente, testar_cookies_de=sempre_falha)
+    try:
+        assert p.definir_cookies(None)["ativo"] is False
+    finally:
+        p.encerrar()
+
+
+def test_navegador_desconhecido_e_recusado_na_hora(subir):
+    """Validar contra a lista do yt-dlp aqui faz a falha aparecer ao
+    escolher, e não no meio de um download."""
+    p, _ = subir()
+    with pytest.raises(EntradaInvalida) as erro:
+        p.definir_cookies("internet_explorer")
+    assert "não é suportado" in str(erro.value)
+
+
+def test_navegador_invalido_no_yaml_nao_derruba_a_subida(ambiente, info_dict_real):
+    """Cookies são acessório: um valor errado no arquivo desliga a opção e
+    explica na tela, em vez de impedir a aplicação de subir."""
+    (ambiente["config"] / "cookies.yaml").write_text(
+        'navegador: "netscape"\n', encoding="utf-8")
+    p = Pipeline(ambiente["config"], ambiente["data"],
+                 downloader=DownloaderEco(info_dict_real),
+                 detectar_ffmpeg=ffmpeg_presente)
+    try:
+        c = p.cookies()
+        assert c["ativo"] is False
+        assert "netscape" in c["motivo"]
+    finally:
+        p.encerrar()
+
+
+def test_yaml_de_cookies_e_lido_na_subida(ambiente, info_dict_real):
+    (ambiente["config"] / "cookies.yaml").write_text(
+        'navegador: "firefox"\nperfil: "default"\n', encoding="utf-8")
+    p = Pipeline(ambiente["config"], ambiente["data"],
+                 downloader=DownloaderEco(info_dict_real),
+                 detectar_ffmpeg=ffmpeg_presente)
+    try:
+        assert p.cookies()["navegador"] == "firefox"
+        assert p.cookies()["perfil"] == "default"
+    finally:
+        p.encerrar()
+
+
+def test_ligar_cookies_limpa_o_cache_de_inspecao(ambiente, info_dict_real):
+    """O cache guarda metadados obtidos SEM cookies. Sem limpar, ligar a
+    opção não mudaria nada para um link já inspecionado."""
+    dl = DownloaderEco(info_dict_real)
+    p = Pipeline(ambiente["config"], ambiente["data"], downloader=dl,
+                 detectar_ffmpeg=ffmpeg_presente,
+                 testar_cookies_de=cookies_legiveis)
+    p.inspecionar(URL_REAL)
+    antes = sum(1 for c in dl.chamadas if c[0] == "inspecionar")
+
+    try:
+        p.definir_cookies("firefox")
+        p.inspecionar(URL_REAL)
+        depois = sum(1 for c in dl.chamadas if c[0] == "inspecionar")
+    finally:
+        p.encerrar()
+    assert depois > antes, "a segunda inspeção tem que ir ao site de novo"
+
+
+# ===========================================================================
 # Projetos gerenciados pela tela
 # ===========================================================================
 
