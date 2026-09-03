@@ -8,6 +8,8 @@ Ticket: T6.
 """
 
 import os
+import subprocess
+import sys
 import threading
 import uuid
 from collections.abc import Callable
@@ -39,6 +41,26 @@ AVISO_INTERROMPIDO = (
 )
 
 
+def abrir_no_sistema(caminho: str) -> None:
+    """Abre uma pasta no explorador do sistema.
+
+    Windows é o alvo do projeto (RESEARCH 7); os outros dois entram porque
+    custam duas linhas. `os.startfile` em vez de subprocess: não passa pela
+    linha de comando, então caminho com espaço, acento ou vírgula não precisa
+    de aspas — e é justamente o caminho de footage que costuma ter os três.
+
+    Abre a PASTA, não seleciona o arquivo: `explorer /select,` exige uma
+    linha de comando montada à mão que quebra com espaço no caminho, e o
+    pedido é abrir a pasta.
+    """
+    if sys.platform == "win32":
+        os.startfile(caminho)                                 # noqa: S606
+    elif sys.platform == "darwin":
+        subprocess.run(["open", caminho], check=False)        # noqa: S603,S607
+    else:
+        subprocess.run(["xdg-open", caminho], check=False)    # noqa: S603,S607
+
+
 class ErroDePedido(Exception):
     """Base dos erros que a API traduz em código HTTP."""
 
@@ -57,13 +79,16 @@ class Conflito(ErroDePedido):
 
 class Pipeline:
     def __init__(self, config_dir: Path, data_dir: Path, *,
-                 downloader=None, detectar_ffmpeg: Callable | None = None):
+                 downloader=None, detectar_ffmpeg: Callable | None = None,
+                 abrir_no_explorador: Callable[[str], None] | None = None):
         """Carrega perfis e projetos, detecta o ffmpeg, abre o histórico e
         reconcilia os interrompidos (SPEC 10.1), sobe o worker."""
         self._config_dir = Path(config_dir)
         self._data_dir = Path(data_dir)
         self._downloader = downloader or Downloader()
         self._ffmpeg = (detectar_ffmpeg or detectar)()
+        # Injetado para o teste não abrir uma janela do explorador.
+        self._abrir = abrir_no_explorador or abrir_no_sistema
 
         self._perfis = carregar_perfis(
             self._ler_yaml("perfis.yaml"), validar_seletor=validar_seletor)
@@ -259,17 +284,7 @@ class Pipeline:
         if not urls:
             raise EntradaInvalida("Nenhum link informado.")
 
-        definicao = self._perfis.get(perfil)
-        if definicao is None:
-            raise EntradaInvalida(f"Perfil {perfil!r} não existe.")
-        if not disponivel(definicao, self._ffmpeg.disponivel):
-            raise EntradaInvalida(
-                f"O perfil {perfil!r} exige ffmpeg, que não foi encontrado no PATH.")
-        if projeto not in self._projetos:
-            raise EntradaInvalida(f"Projeto {projeto!r} não existe.")
-        valido, motivo = self._projetos_status[projeto]
-        if not valido:
-            raise EntradaInvalida(f"Projeto {projeto!r} inválido: {motivo}")
+        definicao, _ = self._validar_destino(perfil, projeto)
 
         jobs: list[Job] = []
         for url in urls:
@@ -300,6 +315,81 @@ class Pipeline:
 
         return [self._fila.adicionar(job) for job in jobs]
 
+    def _validar_destino(self, perfil: str, projeto: str):
+        """Perfil e projeto existem, estão disponíveis e são válidos.
+
+        Fatorado porque `enfileirar` e `simular` precisam exatamente da mesma
+        checagem: o --dry-run não vale nada se aceitar o que o download recusa.
+        """
+        definicao = self._perfis.get(perfil)
+        if definicao is None:
+            raise EntradaInvalida(f"Perfil {perfil!r} não existe.")
+        if not disponivel(definicao, self._ffmpeg.disponivel):
+            raise EntradaInvalida(
+                f"O perfil {perfil!r} exige ffmpeg, que não foi encontrado no PATH.")
+        if projeto not in self._projetos:
+            raise EntradaInvalida(f"Projeto {projeto!r} não existe.")
+        valido, motivo = self._projetos_status[projeto]
+        if not valido:
+            raise EntradaInvalida(f"Projeto {projeto!r} inválido: {motivo}")
+        return definicao, self._projetos[projeto]
+
+    def _destino(self, video: Video, perfil, projeto: Projeto) -> tuple[str, str | None]:
+        """Onde o arquivo vai cair, e o aviso de pasta profunda demais.
+
+        Não cria pasta e não baixa: é o MESMO cálculo que o worker usa e que o
+        `--dry-run` mostra. Duas contas separadas seriam duas verdades, e o
+        --dry-run existe justamente para conferir o nome antes de gravar.
+        """
+        montado = montar_caminho(
+            projeto.pasta, video.titulo, video.video_id,
+            video.data_upload, "." + perfil.merge_output_format)
+        return resolver_colisao(montado.caminho, os.path.exists), montado.aviso
+
+    def simular(self, urls: list[str], perfil: str, projeto: str) -> list[dict]:
+        """O que `enfileirar` faria, sem baixar nada e sem criar pasta.
+
+        Alimenta o `--dry-run` da CLI. Consulta os metadados (é de onde sai o
+        nome do arquivo), mas NUNCA chama `baixar`.
+
+        Resultado parcial por link, como o `inspecionar`: quem roda um dry-run
+        quer ver todos os problemas de uma vez, não o primeiro. Perfil e
+        projeto, esses sim, são erro de saída.
+        """
+        if not urls:
+            raise EntradaInvalida("Nenhum link informado.")
+        definicao, destino_projeto = self._validar_destino(perfil, projeto)
+
+        itens: list[dict] = []
+        for url in urls:
+            try:
+                link = normalizar_link(url)
+            except LinkInvalido as erro:
+                itens.append({"ok": False, "original": url, "url": None,
+                              "erro": str(erro), "motivo": "link_invalido"})
+                continue
+            try:
+                video = self._obter_video(link.url)
+            except ErroDeDownload as erro:
+                itens.append({"ok": False, "original": url, "url": link.url,
+                              "erro": erro.classificacao.mensagem,
+                              "motivo": erro.motivo.value})
+                continue
+
+            caminho, aviso_nome = self._destino(video, definicao, destino_projeto)
+            ja = self._historico.ja_baixado(video.extractor, video.video_id, perfil)
+            itens.append({
+                "ok": True,
+                "original": url,
+                "url": link.url,
+                "e_youtube": link.e_youtube,
+                "aviso": " | ".join(x for x in (link.aviso, aviso_nome) if x) or None,
+                "video": self._video_dict(video),
+                "destino": caminho,
+                "ja_baixado": asdict(ja) if ja is not None else None,
+            })
+        return itens
+
     def _preparar(self, job: Job) -> Preparacao:
         """Chamado pelo worker, na thread dele, na hora de baixar.
 
@@ -311,14 +401,11 @@ class Pipeline:
         projeto = self._projetos[job.projeto]
         Path(projeto.pasta).mkdir(parents=True, exist_ok=True)
 
-        montado = montar_caminho(
-            projeto.pasta, job.video.titulo, job.video.video_id,
-            job.video.data_upload, "." + perfil.merge_output_format)
-        if montado.aviso:
+        destino, aviso = self._destino(job.video, perfil, projeto)
+        if aviso:
             with self._cache_lock:
-                self._avisos[job.id] = montado.aviso
+                self._avisos[job.id] = aviso
 
-        destino = resolver_colisao(montado.caminho, os.path.exists)
         opcoes = opcoes_ytdlp(perfil, job.video.formatos, destino)
         return Preparacao(url=job.video.url_canonica, opcoes=opcoes, destino=destino)
 
@@ -378,6 +465,53 @@ class Pipeline:
     def historico(self, termo: str | None = None, projeto: str | None = None,
                   limite: int = 100) -> list[dict]:
         return [asdict(r) for r in self._historico.buscar(termo, projeto, limite)]
+
+    # ------------------------------------------------------ abrir pasta
+
+    def _dentro_de_projeto(self, alvo: Path) -> Path | None:
+        """A raiz do projeto que contém `alvo`, ou None.
+
+        Comparação por SEGMENTO de caminho, não por prefixo de string: assim
+        `.../cliente_x_secreto` não passa por estar dentro de `.../cliente_x`.
+        No Windows a comparação ignora a caixa, e o `resolve()` de quem chama
+        já colapsou qualquer `..`.
+        """
+        for projeto in self._projetos.values():
+            try:
+                raiz = Path(projeto.pasta).expanduser().resolve()
+            except OSError:
+                continue
+            if alvo.is_relative_to(raiz):
+                return raiz
+        return None
+
+    def abrir_pasta(self, caminho: str) -> str:
+        """Abre no explorador a pasta de `caminho`. Devolve a pasta aberta.
+
+        Só abre o que está DENTRO de um projeto configurado. A aplicação é
+        local, mas local não é sem consequência: sem esta checagem, qualquer
+        página aberta no navegador poderia mandar abrir qualquer pasta do
+        disco. O que não está num projeto é EntradaInvalida.
+        """
+        if not caminho or not str(caminho).strip():
+            raise EntradaInvalida("Nenhum caminho informado.")
+        try:
+            alvo = Path(caminho).expanduser().resolve()
+        except (OSError, ValueError) as erro:
+            raise EntradaInvalida(f"Caminho inválido: {caminho}") from erro
+
+        if self._dentro_de_projeto(alvo) is None:
+            raise EntradaInvalida(
+                "Só é possível abrir pastas dentro de um projeto configurado. "
+                f"Fora de todos eles: {caminho}")
+
+        if not alvo.exists():
+            raise EntradaInvalida(
+                f"O caminho não existe mais no disco: {caminho}")
+
+        pasta = alvo if alvo.is_dir() else alvo.parent
+        self._abrir(str(pasta))
+        return str(pasta)
 
     def config(self) -> dict:
         """Perfis, projetos e status do ffmpeg. Alimenta GET /api/config."""

@@ -651,6 +651,146 @@ def test_estado_fila_expoe_ja_existia(subir):
     assert "aviso" in j
 
 
+# ===========================================================================
+# abrir_pasta — a checagem de contenção é a única coisa que separa este
+# endpoint local de "abre qualquer coisa do disco"
+# ===========================================================================
+
+@pytest.fixture
+def com_abridor(ambiente, info_dict_real):
+    """Pipeline cujo abridor é um espião: nenhuma janela é aberta."""
+    abertas = []
+    p = Pipeline(ambiente["config"], ambiente["data"],
+                 downloader=DownloaderEco(info_dict_real),
+                 detectar_ffmpeg=ffmpeg_presente,
+                 abrir_no_explorador=abertas.append)
+    yield p, abertas, ambiente["footage"]
+    p.encerrar()
+
+
+def test_abrir_pasta_aceita_arquivo_dentro_do_projeto(com_abridor):
+    p, abertas, footage = com_abridor
+    arquivo = footage / "pessoal" / "v.mp4"
+    arquivo.parent.mkdir(parents=True)
+    arquivo.write_bytes(bytes(10))
+
+    aberta = p.abrir_pasta(str(arquivo))
+
+    assert Path(aberta) == arquivo.parent, "abre a PASTA do arquivo"
+    assert [Path(x) for x in abertas] == [arquivo.parent]
+
+
+def test_abrir_pasta_aceita_a_propria_pasta_do_projeto(com_abridor):
+    p, abertas, footage = com_abridor
+    (footage / "pessoal").mkdir(parents=True)
+    assert Path(p.abrir_pasta(str(footage / "pessoal"))) == footage / "pessoal"
+    assert len(abertas) == 1
+
+
+def test_abrir_pasta_recusa_caminho_fora_de_qualquer_projeto(com_abridor, tmp_path):
+    p, abertas, _ = com_abridor
+    fora = tmp_path / "fora"
+    fora.mkdir()
+    with pytest.raises(EntradaInvalida) as erro:
+        p.abrir_pasta(str(fora))
+    assert "projeto configurado" in str(erro.value)
+    assert abertas == [], "nada pode ter sido aberto"
+
+
+def test_abrir_pasta_recusa_travessia_com_pontos(com_abridor, tmp_path):
+    """`..` é o jeito óbvio de sair do projeto, e o resolve() colapsa antes.
+
+    O destino da travessia EXISTE de propósito: se não existisse, quem
+    recusaria seria a checagem de existência, e este teste passaria sem provar
+    nada sobre a contenção.
+    """
+    p, abertas, footage = com_abridor
+    (footage / "pessoal").mkdir(parents=True)
+    fora = tmp_path / "fora"
+    fora.mkdir()
+    travessia = footage / "pessoal" / ".." / ".." / fora.name
+    assert travessia.resolve() == fora.resolve(), "a travessia tem que chegar lá"
+
+    with pytest.raises(EntradaInvalida) as erro:
+        p.abrir_pasta(str(travessia))
+    assert "projeto configurado" in str(erro.value)
+    assert abertas == []
+
+
+def test_abrir_pasta_recusa_prefixo_parecido(com_abridor):
+    """`.../pessoal_secreto` NÃO está dentro de `.../pessoal`: a comparação é
+    por segmento de caminho, não por prefixo de string."""
+    p, abertas, footage = com_abridor
+    vizinho = Path(str(footage / "pessoal") + "_secreto")
+    vizinho.mkdir(parents=True)
+    with pytest.raises(EntradaInvalida):
+        p.abrir_pasta(str(vizinho))
+    assert abertas == []
+
+
+def test_abrir_pasta_recusa_caminho_vazio(com_abridor):
+    p, abertas, _ = com_abridor
+    for vazio in ("", "   ", None):
+        with pytest.raises(EntradaInvalida):
+            p.abrir_pasta(vazio)
+    assert abertas == []
+
+
+def test_abrir_pasta_recusa_o_que_nao_existe_mais(com_abridor):
+    """Dentro do projeto, mas apagado: abrir daria janela de erro do sistema.
+    A mensagem é melhor."""
+    p, abertas, footage = com_abridor
+    with pytest.raises(EntradaInvalida) as erro:
+        p.abrir_pasta(str(footage / "pessoal" / "sumiu.mp4"))
+    assert "não existe mais" in str(erro.value)
+    assert abertas == []
+
+
+def test_abrir_pasta_ignora_caixa_no_windows(com_abridor):
+    """O Windows não diferencia maiúscula de minúscula; a checagem também
+    não pode, ou recusaria um caminho legítimo do próprio histórico."""
+    p, abertas, footage = com_abridor
+    (footage / "pessoal").mkdir(parents=True)
+    p.abrir_pasta(str(footage / "pessoal").upper())
+    assert len(abertas) == 1
+
+
+# ===========================================================================
+# simular — o que alimenta o --dry-run
+# ===========================================================================
+
+def test_simular_nao_baixa_e_nao_cria_pasta(subir, ambiente):
+    p, dl = subir()
+    itens = p.simular([URL_REAL], perfil="edicao_1080", projeto="pessoal")
+    assert len(itens) == 1 and itens[0]["ok"]
+    assert itens[0]["destino"].endswith(".mp4")
+    assert not any(c[0] == "baixar" for c in dl.chamadas)
+    assert not (ambiente["footage"] / "pessoal").exists()
+
+
+def test_simular_marca_link_invalido_sem_derrubar_os_outros(subir):
+    p, _ = subir()
+    itens = p.simular([URL_REAL, "isso não é link"],
+                      perfil="edicao_1080", projeto="pessoal")
+    assert [i["ok"] for i in itens] == [True, False]
+    assert itens[1]["motivo"] == "link_invalido"
+
+
+def test_simular_recusa_perfil_inexistente(subir):
+    p, _ = subir()
+    with pytest.raises(EntradaInvalida):
+        p.simular([URL_REAL], perfil="nao_existe", projeto="pessoal")
+
+
+def test_simular_avisa_que_ja_foi_baixado(subir):
+    p, _ = subir()
+    esperar_terminal(p, p.enfileirar([URL_REAL], perfil="edicao_1080",
+                                     projeto="pessoal")[0])
+    item = p.simular([URL_REAL], perfil="edicao_1080", projeto="pessoal")[0]
+    assert item["ja_baixado"] is not None
+    assert item["ja_baixado"]["caminho"]
+
+
 def test_estado_fila_expoe_a_url_colada(subir):
     """Sem a url no job, "tentar de novo" morre no primeiro F5: a tela só
     saberia refazer o download enquanto a aba que enfileirou continuasse
