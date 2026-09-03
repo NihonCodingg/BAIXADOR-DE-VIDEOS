@@ -22,6 +22,7 @@ class PipelineFalso:
         self.chamadas = []
         self.encerrado = False
         self.erro_enfileirar = None
+        self.erro_abrir = None
         self.explodir = False
 
     def inspecionar(self, texto):
@@ -56,6 +57,12 @@ class PipelineFalso:
     def config(self):
         self.chamadas.append(("config",))
         return {"ffmpeg": {"disponivel": True}, "perfis": [], "projetos": []}
+
+    def abrir_pasta(self, caminho):
+        self.chamadas.append(("abrir_pasta", caminho))
+        if self.erro_abrir:
+            raise self.erro_abrir
+        return "D:/FOOTAGE/cliente_x"
 
     def encerrar(self):
         self.encerrado = True
@@ -267,6 +274,37 @@ def test_encerra_o_pipeline_ao_desligar(web):
     with TestClient(app):
         assert pipeline.encerrado is False
     assert pipeline.encerrado is True
+
+
+# ===========================================================================
+# POST /api/abrir-pasta
+# ===========================================================================
+
+def test_abrir_pasta_repassa_o_caminho_e_devolve_a_pasta(cliente):
+    c, pipeline = cliente
+    r = c.post("/api/abrir-pasta", json={"caminho": "D:/FOOTAGE/cliente_x/v.mp4"})
+    assert r.status_code == 200
+    assert r.json() == {"aberto": True, "pasta": "D:/FOOTAGE/cliente_x"}
+    assert ("abrir_pasta", "D:/FOOTAGE/cliente_x/v.mp4") in pipeline.chamadas
+
+
+def test_abrir_pasta_fora_dos_projetos_e_400(cliente):
+    """A recusa vem do pipeline e chega como a forma única de erro."""
+    c, pipeline = cliente
+    pipeline.erro_abrir = EntradaInvalida(
+        "Só é possível abrir pastas dentro de um projeto configurado. "
+        "Fora de todos eles: C:/Windows/System32")
+    r = c.post("/api/abrir-pasta", json={"caminho": "C:/Windows/System32"})
+    assert r.status_code == 400
+    assert "projeto configurado" in r.json()["erro"]
+    assert "detalhes" not in r.json()
+
+
+def test_abrir_pasta_sem_campo_caminho_e_422(cliente):
+    c, _ = cliente
+    r = c.post("/api/abrir-pasta", json={})
+    assert r.status_code == 422
+    assert r.json()["erro"] == "Corpo ou parâmetros inválidos."
 
 
 # ===========================================================================

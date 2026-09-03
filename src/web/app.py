@@ -47,6 +47,10 @@ class CorpoFila(BaseModel):
     forcar: bool = False            # rebaixar um vídeo já concluído neste perfil
 
 
+class CorpoAbrirPasta(BaseModel):
+    caminho: str                    # arquivo ou pasta, sempre dentro de um projeto
+
+
 def _erro(status: int, mensagem: str, **extras) -> JSONResponse:
     return JSONResponse(status_code=status, content={"erro": mensagem, **extras})
 
@@ -115,6 +119,12 @@ def criar_app(pipeline, pasta_web: Path | None = None) -> FastAPI:
     def historico(termo: str | None = None, projeto: str | None = None,
                   limite: int = Query(100, ge=1, le=1000)):
         return {"registros": pipeline.historico(termo, projeto, limite)}
+
+    @app.post("/api/abrir-pasta")
+    def abrir_pasta(corpo: CorpoAbrirPasta):
+        """Abre a pasta no explorador. Só dentro de um projeto configurado —
+        a validação é do pipeline, e caminho de fora vira 400."""
+        return {"aberto": True, "pasta": pipeline.abrir_pasta(corpo.caminho)}
 
     @app.get("/api/config")
     def config():
