@@ -76,14 +76,15 @@ class PipelineFalso:
         self.chamadas.append(("historico", termo, projeto, limite))
         return self._historico
 
-    def simular(self, urls, perfil, projeto):
-        self.chamadas.append(("simular", list(urls), perfil, projeto))
+    def simular(self, urls, perfil, projeto=None, pasta=None):
+        self.chamadas.append(("simular", list(urls), perfil, projeto, pasta))
         if self._erro:
             raise self._erro
         return self._simulacao
 
-    def enfileirar(self, urls, perfil, projeto, forcar=False):
-        self.chamadas.append(("enfileirar", list(urls), perfil, projeto, forcar))
+    def enfileirar(self, urls, perfil, projeto=None, forcar=False, pasta=None):
+        self.chamadas.append(
+            ("enfileirar", list(urls), perfil, projeto, forcar, pasta))
         if self._erro:
             raise self._erro
         return [j["id"] for j in self._jobs]
@@ -253,7 +254,34 @@ def test_forcar_e_repassado():
     falso = PipelineFalso(jobs=[job()])
     main(["--perfil", "edicao_1080", "--projeto", "cliente_x", "--forcar", URL],
          pipeline=falso, escrever=Saida())
-    assert ("enfileirar", [URL], "edicao_1080", "cliente_x", True) in falso.chamadas
+    assert ("enfileirar", [URL], "edicao_1080", "cliente_x", True, None) in falso.chamadas
+
+
+def test_pasta_avulsa_dispensa_o_projeto():
+    """A CLI não pode ficar atrás da tela: o critério do PLAN é as duas
+    produzirem o mesmo resultado para a mesma entrada."""
+    falso = PipelineFalso(jobs=[job(projeto="avulso")])
+    saida = Saida()
+    codigo = main(["--perfil", "edicao_1080", "--pasta", "D:/FOOTAGE/avulsa", URL],
+                  pipeline=falso, escrever=saida)
+    assert codigo == 0
+    assert ("enfileirar", [URL], "edicao_1080", None, False,
+            "D:/FOOTAGE/avulsa") in falso.chamadas
+    assert "pasta avulsa D:/FOOTAGE/avulsa" in saida.texto
+
+
+def test_dry_run_aceita_pasta_avulsa():
+    falso = PipelineFalso(simulacao=[])
+    main(["--dry-run", "--perfil", "edicao_1080", "--pasta", "D:/FOOTAGE/avulsa", URL],
+         pipeline=falso, escrever=Saida())
+    assert ("simular", [URL], "edicao_1080", None, "D:/FOOTAGE/avulsa") in falso.chamadas
+
+
+def test_sem_projeto_e_sem_pasta_orienta_os_dois():
+    saida = Saida()
+    assert main(["--perfil", "edicao_1080", URL],
+                pipeline=PipelineFalso(), escrever=saida) == 1
+    assert "--pasta" in saida.texto
 
 
 # ===========================================================================

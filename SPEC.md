@@ -872,6 +872,70 @@ perceptível.
 
 ---
 
+## 12b. Projetos editados pela tela
+
+O `config/projetos.yaml` continua sendo a fonte da verdade e continua editável
+à mão. O que mudou é que a interface também escreve nele.
+
+### 12b.1 Nome de projeto
+
+Chave de YAML, identificador na API e segmento de URL em
+`DELETE /api/projetos/{nome}`. Aceita `[A-Za-z0-9]` no primeiro caractere e
+`[A-Za-z0-9_-]` nos demais, até 40. `avulso` é **reservado**.
+
+A restrição é do domínio (`validar_nome`), pura, e existe para não haver três
+lugares diferentes escapando a mesma string.
+
+### 12b.2 Escrita preservando comentários
+
+O arquivo é editado por TEXTO, não reserializado: acrescenta um bloco no fim,
+remove um bloco por chave. Reserializar com o PyYAML apagaria os comentários —
+inclusive o aviso de apontar `pasta` para fora do repositório — e reordenaria
+as chaves.
+
+Duas redes de proteção, porque um `projetos.yaml` corrompido derruba a
+aplicação na subida seguinte: o resultado é relido e conferido **antes** de
+substituir o arquivo, e a gravação é atômica.
+
+### 12b.3 Gravabilidade testada com escrita real
+
+`os.access` no Windows ignora ACL e responde que dá para escrever onde não dá.
+A validação grava um arquivo temporário na pasta e apaga. Descobrir que o
+destino é somente-leitura depois de baixar 4 GB seria a pior hora.
+
+### 12b.4 Remoção não mexe no histórico
+
+Tirar um projeto tira o **destino da lista**. As linhas do histórico continuam
+apontando para os arquivos, que continuam no disco — o histórico nunca mente
+sobre onde o arquivo está.
+
+Remover é recusado em dois casos: quando o projeto tem download na fila ou em
+andamento (o worker ficaria sem para onde gravar, no meio da gravação), e
+quando é o último (sem nenhum projeto a aplicação não sobe).
+
+### 12b.5 Destino avulso
+
+`POST /api/fila` aceita `pasta` no lugar de `projeto`: um caminho digitado na
+hora, válido só naqueles downloads e não gravado no YAML. Passa pela mesma
+validação de um projeto. No job e no histórico o `projeto` vira `"avulso"`; o
+`caminho` é que diz para onde o arquivo foi.
+
+### 12b.6 O seletor de pasta é do back-end
+
+O navegador **não entrega caminho de disco**. A File System Access API está
+disponível em `127.0.0.1` (contexto seguro), mas devolve um handle sem
+nenhum acessor de caminho — é decisão da especificação, para um site não
+mapear o disco de quem o abre. `<input webkitdirectory>` e arrastar pasta dão
+apenas caminho relativo.
+
+Como servidor e navegador rodam na mesma máquina (§11 vincula em 127.0.0.1),
+quem abre o seletor nativo é o back-end, em **subprocesso** com timeout: o Tk
+não é thread-safe, os handlers rodam em threadpool, e um diálogo esquecido
+aberto penduraria a requisição. Medido: 190 ms para o processo, contra 654 ms
+para criar um Tk dentro de uma thread do servidor.
+
+---
+
 ## 13. Decisões tomadas sem consulta
 
 Registradas para revisão.

@@ -63,7 +63,10 @@ download.**
   seletor de formato, uma ordem de preferência de codec e um container de saída.
   A justificativa técnica de cada um está na Seção 2.2 do
   [RESEARCH.md](RESEARCH.md).
-- **Organização automática** em pastas por projeto/cliente.
+- **Organização automática** em pastas por projeto/cliente, cadastráveis
+  pela própria tela (o `projetos.yaml` continua editável à mão, e os
+  comentários dele sobrevivem à edição pela interface). Dá também para digitar
+  uma pasta avulsa, usada só naquele download.
 - **Nomenclatura consistente e sanitizada para Windows.** Não é um wrapper do
   `sanitize_filename` do yt-dlp: ele não trata nomes reservados do DOS, não
   trunca por tamanho, não trata título vazio e substitui caracteres proibidos
@@ -132,7 +135,8 @@ winget install Gyan.FFmpeg
 
 ## Como rodar
 
-> Antes de rodar, ajuste `config/projetos.yaml` para as suas pastas.
+> Antes de rodar, ajuste `config/projetos.yaml` para as suas pastas — ou
+> cadastre-as pelo botão **Projetos** da interface.
 
 Requisitos: Python 3.12+ e `ffmpeg` no `PATH`.
 
@@ -149,6 +153,48 @@ python -m src.web
 ```
 
 O navegador abre sozinho em `http://127.0.0.1:8000`.
+
+### Abrir sem terminal
+
+`Baixador.bat`, na raiz do projeto, faz o mesmo com um duplo clique:
+
+- entra na pasta do projeto, venha o clique de onde vier;
+- usa o `.venv` se existir, senão o `python` do PATH;
+- **se já estiver rodando, só abre o navegador** — a pergunta é feita a
+  `/api/config`, não à porta, então outro programa ocupando a 8000 não passa
+  por Baixador;
+- reabre a própria janela **minimizada**, para não ficar na frente do
+  navegador. Ela continua na barra de tarefas: é por ela que se para o
+  servidor;
+- **se der erro, a janela fica aberta** com a mensagem. Nada de console
+  piscando e sumindo.
+
+#### Atalho na área de trabalho
+
+1. Clique com o botão direito em `Baixador.bat` → **Mostrar mais opções** (no
+   Windows 11) → **Enviar para** → **Área de trabalho (criar atalho)**.
+2. O atalho pode ser renomeado à vontade; ele guarda o caminho do `.bat`.
+
+Arrastar com o **botão direito** para a área de trabalho e escolher *Criar
+atalhos aqui* dá no mesmo. Não arraste com o botão esquerdo: isso **move** o
+arquivo para fora do repositório.
+
+#### Trocar o ícone
+
+Botão direito no atalho → **Propriedades** → aba **Atalho** → **Alterar
+ícone** → **Procurar**.
+
+- O Windows aceita `.ico` (ou `.exe`/`.dll` que contenham ícones). **PNG e JPG
+  não servem** — converta antes.
+- Sem nenhum arquivo à mão, `%SystemRoot%\System32\imageres.dll` e
+  `shell32.dll` trazem centenas de ícones prontos.
+- Guarde o `.ico` fora do repositório, ou o atalho quebra se a pasta mudar.
+
+Na mesma aba, **Executar: Minimizada** deixa até o piscar inicial da janela
+fora da tela.
+
+> O `.bat` chama a si mesmo com `--rodando` para reabrir minimizado. É um
+> detalhe interno; não use esse argumento à mão.
 
 Linha de comando:
 

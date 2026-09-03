@@ -123,8 +123,9 @@ def main():
                             detectar_ffmpeg=lambda: StatusFFmpeg(
                                 ffmpeg="C:\\ffmpeg\\bin\\ffmpeg.exe",
                                 ffprobe="C:\\ffmpeg\\bin\\ffprobe.exe"),
-                            # espião: gerar exemplo não abre janela
-                            abrir_no_explorador=lambda caminho: None)
+                            # espiões: gerar exemplo não abre janela nenhuma
+                            abrir_no_explorador=lambda caminho: None,
+                            escolher_pasta=lambda: str(footage / "escolhida"))
         app = criar_app(pipeline, pasta_web=RAIZ / "web")
 
         with TestClient(app, raise_server_exceptions=False) as c:
@@ -176,6 +177,23 @@ def main():
             bloco("POST /api/abrir-pasta — caminho fora dos projetos (400)",
                   c.post("/api/abrir-pasta",
                          json={"caminho": "C:\\Windows\\System32"}))
+
+            # --- projetos pela tela ---
+            (footage / "escolhida").mkdir(parents=True, exist_ok=True)
+            bloco("POST /api/escolher-pasta — seletor nativo do sistema",
+                  c.post("/api/escolher-pasta"))
+            bloco("POST /api/projetos — cadastra",
+                  c.post("/api/projetos", json={
+                      "nome": "cliente_novo", "rotulo": "Cliente Novo",
+                      "caminho": str(footage / "escolhida")}))
+            bloco("POST /api/projetos — pasta que não existe (400)",
+                  c.post("/api/projetos", json={
+                      "nome": "outro", "caminho": str(footage / "nao_existe")}))
+            bloco("POST /api/projetos — nome já usado (409)",
+                  c.post("/api/projetos", json={
+                      "nome": "cliente_novo", "caminho": str(footage / "escolhida")}))
+            bloco("GET /api/projetos", c.get("/api/projetos"))
+            bloco("DELETE /api/projetos/{nome}", c.delete("/api/projetos/cliente_novo"))
 
             # --- destino já ocupado: sucesso com aviso (SPEC 9.3) ---
             # Na vida real este é uma corrida: o arquivo aparece entre a

@@ -25,3 +25,5 @@ PyYAML>=6.0
 #   threading - biblioteca padrão
 #   ffmpeg    - binário externo, instalado pelo sistema (winget install Gyan.FFmpeg)
 #   mutagen   - só seria preciso para embutir thumbnail, que ficou fora (SPEC 14.2)
+#   tkinter   - biblioteca padrão; só o seletor nativo de pasta a usa, num
+#               subprocesso, e a ausência dela vira erro tratado na tela

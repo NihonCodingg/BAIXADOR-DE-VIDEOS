@@ -1,6 +1,7 @@
 """Linha de comando. Usa o MESMO pipeline.py que a web.
 
     python -m src.cli --perfil edicao_1080 --projeto cliente_x URL [URL...]
+    python -m src.cli --perfil edicao_1080 --pasta "D:/FOOTAGE/avulsa" URL
     python -m src.cli --dry-run --perfil edicao_1080 --projeto cliente_x URL
     python -m src.cli --perfis
     python -m src.cli --projetos
@@ -281,11 +282,13 @@ def relatorio(jobs: list[dict], escrever) -> int:
     return 1 if (falharam or outros) else 0
 
 
-def baixar(pipeline, urls: list[str], perfil: str, projeto: str, forcar: bool,
-           escrever, tty: bool, dormir=time.sleep) -> int:
-    ids = pipeline.enfileirar(urls, perfil, projeto, forcar)
+def baixar(pipeline, urls: list[str], perfil: str, projeto: str | None,
+           forcar: bool, escrever, tty: bool, dormir=time.sleep,
+           pasta: str | None = None) -> int:
+    ids = pipeline.enfileirar(urls, perfil, projeto, forcar, pasta)
     plural = "link" if len(ids) == 1 else "links"
-    escrever(f"{len(ids)} {plural} na fila — perfil {perfil}, projeto {projeto}.")
+    onde = f"projeto {projeto}" if projeto else f"pasta avulsa {pasta}"
+    escrever(f"{len(ids)} {plural} na fila — perfil {perfil}, {onde}.")
     escrever("Um download por vez, em sequência.\n")
     jobs = acompanhar(pipeline, ids, escrever, tty, dormir)
     return relatorio(jobs, escrever)
@@ -313,6 +316,9 @@ def construir_parser() -> argparse.ArgumentParser:
     parser.add_argument("--perfil", help="nome do perfil de qualidade")
     parser.add_argument("--projeto",
                         help="nome do projeto de destino; também filtra o --historico")
+    parser.add_argument("--pasta",
+                        help="pasta de destino avulsa, usada só neste download "
+                             "e não cadastrada; alternativa ao --projeto")
     parser.add_argument("--forcar", action="store_true",
                         help="baixa de novo um vídeo já concluído neste perfil")
     parser.add_argument("--dry-run", action="store_true", dest="dry_run",
@@ -343,8 +349,9 @@ def main(argv: list[str] | None = None, *, pipeline=None, escrever=None) -> int:
         escrever("Nada a fazer: informe pelo menos um link, ou use "
                  "--perfis, --projetos ou --historico.")
         return 1
-    if not consultas and not (argumentos.perfil and argumentos.projeto):
-        escrever("Faltou --perfil ou --projeto. "
+    if not consultas and not (argumentos.perfil
+                              and (argumentos.projeto or argumentos.pasta)):
+        escrever("Faltou --perfil, e --projeto ou --pasta. "
                  "Veja as opções com --perfis e --projetos.")
         return 1
 
@@ -378,12 +385,15 @@ def _executar(pipeline, argumentos, escrever) -> int:
                                argumentos.projeto, argumentos.limite),
             escrever,
             filtrou=bool(argumentos.historico or argumentos.projeto))
+    destino = argumentos.projeto or argumentos.pasta
     if argumentos.dry_run:
         return mostrar_simulacao(
-            pipeline.simular(argumentos.urls, argumentos.perfil, argumentos.projeto),
-            argumentos.projeto, escrever)
+            pipeline.simular(argumentos.urls, argumentos.perfil,
+                             argumentos.projeto, argumentos.pasta),
+            destino, escrever)
     return baixar(pipeline, argumentos.urls, argumentos.perfil, argumentos.projeto,
-                  argumentos.forcar, escrever, sys.stdout.isatty())
+                  argumentos.forcar, escrever, sys.stdout.isatty(),
+                  pasta=argumentos.pasta)
 
 
 if __name__ == "__main__":
