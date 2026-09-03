@@ -282,6 +282,8 @@ function aplicarConfig(cfg) {
   preencherPerfis($('#lote-perfil'), estado.escolhas.perfil);
   preencherProjetos($('#lote-projeto'), estado.escolhas.projeto);
 
+  preencherCookies(cfg.cookies || {});
+
   // filtro de projeto do histórico
   var filtro = $('#filtro-projeto');
   filtro.innerHTML = '<option value="">Todos os projetos</option>' +
@@ -1017,6 +1019,42 @@ function refazer(dados) {
    pela tela. O back-end grava preservando os comentários do arquivo.
    ------------------------------------------------------------ */
 
+/* Cookies do navegador: a saída para o "confirme que não é um robô" do
+   YouTube. Fica aqui, e não num arquivo para editar à mão, porque quem
+   precisa disso está no meio de um download que falhou. */
+function preencherCookies(cookies) {
+  var sel = $('#cookies-navegador');
+  sel.innerHTML = '<option value="">Desativado</option>' +
+    (cookies.navegadores || []).map(function (n) {
+      return '<option value="' + esc(n) + '">' + esc(n) + '</option>';
+    }).join('');
+  sel.value = cookies.navegador || '';
+  $('#cookies-perfil').value = cookies.perfil || '';
+
+  var aviso = $('#aviso-cookies');
+  aviso.hidden = !cookies.motivo;
+  if (cookies.motivo) aviso.querySelector('.nota__corpo').textContent = cookies.motivo;
+}
+
+function salvarCookies() {
+  var corpo = {
+    navegador: $('#cookies-navegador').value || null,
+    perfil: $('#cookies-perfil').value.trim() || null
+  };
+  $('#btn-salvar-cookies').disabled = true;
+  api('POST', '/api/cookies', corpo).then(function (r) {
+    registrarSucessoApi();
+    preencherCookies(r.cookies);
+    toast(r.cookies.ativo
+      ? 'Cookies do ' + r.cookies.navegador + ' ligados.'
+      : 'Cookies desligados.', 'ok');
+  }).catch(function (e) {
+    if (!registrarFalhaApi(e)) erroProjeto(e.message);
+  }).then(function () {
+    $('#btn-salvar-cookies').disabled = false;
+  });
+}
+
 function alternarProjetos(mostrar) {
   var painel = $('#projetos');
   painel.hidden = mostrar === undefined ? !painel.hidden : !mostrar;
@@ -1222,6 +1260,7 @@ function ligarEventos() {
   $('#btn-gerenciar-projetos').addEventListener('click', function () { alternarProjetos(); });
   $('#btn-fechar-projetos').addEventListener('click', function () { alternarProjetos(false); });
   $('#btn-adicionar-projeto').addEventListener('click', adicionarProjeto);
+  $('#btn-salvar-cookies').addEventListener('click', salvarCookies);
   $('#btn-enfileirar-todos').addEventListener('click', function () {
     enfileirar(estado.preview.map(function (_, i) { return i; }));
   });

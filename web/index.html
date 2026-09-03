@@ -52,7 +52,7 @@
         <h2 class="panel__title" id="h-entrada">Entrada</h2>
         <div class="row row--gap">
           <span class="panel__note" id="contador-links">nenhum link</span>
-          <button class="btn btn--mini btn--ghost" id="btn-gerenciar-projetos">Projetos</button>
+          <button class="btn btn--mini btn--ghost" id="btn-gerenciar-projetos">Ajustes</button>
         </div>
       </div>
       <div class="panel__body">
@@ -66,14 +66,36 @@
       </div>
     </section>
 
-    <!-- 1b. PROJETOS (abre pelo botao "Projetos" da Entrada) -->
+    <!-- 1b. AJUSTES (abre pelo botao "Ajustes" da Entrada) -->
     <section class="panel" id="projetos" aria-labelledby="h-projetos" hidden>
       <div class="panel__head">
-        <h2 class="panel__title" id="h-projetos">Projetos</h2>
+        <h2 class="panel__title" id="h-projetos">Ajustes</h2>
         <button class="btn btn--mini btn--ghost" id="btn-fechar-projetos">Fechar</button>
       </div>
       <div class="panel__body">
 
+        <div class="lote">
+          <label class="field field--inline">
+            <span class="field__label">Cookies do navegador</span>
+            <select class="select" id="cookies-navegador"></select>
+          </label>
+          <label class="field field--inline">
+            <span class="field__label">Perfil (opcional)</span>
+            <input class="input" id="cookies-perfil" spellcheck="false"
+              placeholder="Default" autocomplete="off">
+          </label>
+          <button class="btn btn--mini" id="btn-salvar-cookies">Salvar</button>
+        </div>
+        <p class="hint">Ative só se o YouTube pedir confirmação de que você não
+          é um robô. No Windows, feche o navegador antes de baixar: com Chrome
+          e derivados abertos o arquivo de cookies fica travado. O Firefox é o
+          menos problemático.</p>
+        <div class="nota nota--aviso" id="aviso-cookies" hidden>
+          <span class="nota__tag">Cookies</span>
+          <span class="nota__corpo"></span>
+        </div>
+
+        <p class="hint">Projetos cadastrados — a pasta de destino de cada um.</p>
         <div id="lista-projetos"></div>
 
         <div class="lote">
