@@ -8,7 +8,7 @@ serviço, não tem autenticação e não deve ser exposta na rede.
 
 ## Estado atual
 
-**Interface funcionando; CLI pendente.** Domínio, adapter, histórico, fila, API e interface estão implementados. O visual foi desenhado fora do repositório a partir do `CONTRATO-API.md` e integrado no T7; a CLI é o T8.
+**Todos os tickets implementados.** Domínio, adapter, histórico, fila, API, interface e linha de comando estão prontos. O visual foi desenhado fora do repositório a partir do `CONTRATO-API.md` e integrado no T7.
 
 O que existe hoje:
 
@@ -28,12 +28,11 @@ O que existe hoje:
 | T6 — pipeline, API e `CONTRATO-API.md` | **implementado** |
 | T7 — integração do front, validada no navegador | **implementado** |
 | Smoke test com download real | **passou**: 1080x1920 H.264 + AAC |
-| T8 — CLI | pendente |
+| T8 — CLI e `POST /api/abrir-pasta` | **implementado** |
 
-A CLI ainda levanta `NotImplementedError` com o ticket que a implementa; o
-resto das instruções de execução abaixo descreve o que funciona hoje.
+As instruções de execução abaixo descrevem o que funciona hoje.
 
-Suíte atual: **589 testes**. Rodar:
+Suíte atual: **637 testes**. Rodar:
 
 ```bash
 python -m pytest tests/ -v
@@ -133,8 +132,7 @@ winget install Gyan.FFmpeg
 
 ## Como rodar
 
-> A interface já sobe e funciona; a CLI (T8) não existe. Antes de rodar,
-> ajuste `config/projetos.yaml` para as suas pastas.
+> Antes de rodar, ajuste `config/projetos.yaml` para as suas pastas.
 
 Requisitos: Python 3.12+ e `ffmpeg` no `PATH`.
 
@@ -152,14 +150,26 @@ python -m src.web
 
 O navegador abre sozinho em `http://127.0.0.1:8000`.
 
-Linha de comando (T8, ainda não implementada):
+Linha de comando:
 
 ```bash
-python -m src.cli --perfil edicao_1080 --projeto cliente_x URL
+python -m src.cli --perfil edicao_1080 --projeto cliente_x URL [URL...]
 ```
 
-A CLI e a interface web usam o mesmo `pipeline.py`. A CLI aceita `--dry-run`
-para mostrar o que seria baixado e onde, sem baixar nada.
+A CLI e a interface web usam o mesmo `pipeline.py` — nenhuma regra é escrita
+duas vezes. Outras opções:
+
+| Comando | Para quê |
+|---|---|
+| `--dry-run` | Mostra o que seria baixado e **para onde**, sem baixar. É como conferir a nomenclatura antes de comprometer disco |
+| `--perfis` | Lista os perfis do YAML, com o teto de qualidade e a extensão de cada um |
+| `--projetos` | Lista os projetos, a pasta de destino e o motivo de um inválido |
+| `--historico [TERMO]` | Consulta o histórico; `TERMO` busca no título ignorando acento |
+| `--forcar` | Baixa de novo um vídeo já concluído naquele perfil |
+
+Ao final de um download a CLI imprime quantos foram baixados, quantos **já
+existiam** no destino e quantas falhas houve, com o caminho de cada arquivo.
+Sai com código 0 se tudo deu certo e 1 se qualquer coisa falhou.
 
 ## Organização do código
 
