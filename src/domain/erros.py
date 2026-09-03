@@ -19,6 +19,8 @@ class MotivoFalha(str, Enum):
     SITE_NAO_SUPORTADO = "site_nao_suportado"
     REDE = "rede"
     RATE_LIMIT = "rate_limit"
+    BLOQUEIO_BOT = "bloqueio_bot"
+    COOKIES = "cookies"
     SEM_FFMPEG = "sem_ffmpeg"
     DISCO = "disco"
     DESCONHECIDO = "desconhecido"
@@ -34,6 +36,16 @@ MENSAGENS = {
     MotivoFalha.SITE_NAO_SUPORTADO: "Este site não é suportado pelo yt-dlp.",
     MotivoFalha.REDE: "Falha de rede.",
     MotivoFalha.RATE_LIMIT: "O site limitou a taxa de requisições. Aguarde.",
+    MotivoFalha.BLOQUEIO_BOT: (
+        "O YouTube pediu confirmação de que você não é um robô. Ative os "
+        "cookies do navegador em Ajustes: a ferramenta passa a usar a sessão "
+        "que você já tem aberta, e o site para de pedir."
+    ),
+    MotivoFalha.COOKIES: (
+        "Não foi possível ler os cookies do navegador configurado. Feche o "
+        "navegador e tente de novo — com ele aberto o arquivo de cookies fica "
+        "travado. Se continuar, desative os cookies em Ajustes."
+    ),
     MotivoFalha.SEM_FFMPEG: "ffmpeg não encontrado — não é possível juntar vídeo e áudio.",
     MotivoFalha.DISCO: "Falha ao gravar no disco.",
     MotivoFalha.DESCONHECIDO: "Falha não classificada.",

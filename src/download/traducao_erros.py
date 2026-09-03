@@ -30,11 +30,36 @@ from ..domain.erros import MENSAGENS, RETENTAVEIS, MotivoFalha
 # Origem de cada string documentada em RESEARCH 6.3; as de ffmpeg vêm de
 # YoutubeDL.py:3544 e postprocessor/ffmpeg.py:225-234.
 TABELA_MENSAGENS: list[tuple[str, MotivoFalha]] = [
+    # ANTES de qualquer coisa com "cookie": a mensagem do bloqueio antibot
+    # sugere --cookies-from-browser, e casaria com as entradas de cookie
+    # abaixo. Sem apóstrofo na substring: o texto real usa U+2019 ("you’re"),
+    # e comparar com o apóstrofo ASCII não casa.
+    ("not a bot", MotivoFalha.BLOQUEIO_BOT),
+    # Falhas de LEITURA dos cookies.
+    #
+    # A PRIMEIRA é a que realmente chega aqui: load_cookies (cookies.py:113)
+    # embrulha TODA exceção em CookieLoadError('failed to load cookies') e
+    # descarta a mensagem original. Por isso o pipeline testa a leitura na
+    # hora de ESCOLHER o navegador — é lá que a causa real ainda existe.
+    ("failed to load cookies", MotivoFalha.COOKIES),
+    # As demais só aparecem no teste direto, sem o embrulho. Medidas no
+    # yt-dlp 2026.08.19: banco travado pelo navegador aberto (cookies.py:363),
+    # App-Bound Encryption do Chrome 127+ (cookies.py:1099), navegador
+    # ausente, e o ValueError de extract_cookies_from_browser.
+    ("could not copy chrome cookie database", MotivoFalha.COOKIES),
+    ("failed to decrypt with dpapi", MotivoFalha.COOKIES),
+    ("cookies database", MotivoFalha.COOKIES),
+    ("unknown browser", MotivoFalha.COOKIES),
+    ("unsupported platform", MotivoFalha.COOKIES),
     ("drm protected", MotivoFalha.DRM),
     ("ffmpeg is not installed", MotivoFalha.SEM_FFMPEG),
     ("ffmpeg not found", MotivoFalha.SEM_FFMPEG),
     ("private video", MotivoFalha.PRIVADO),
+    # Duas formas, porque o YouTube usa as duas: "Video unavailable" e
+    # "This video is unavailable". A segunda não casa com a primeira — o "is"
+    # no meio quebra a substring, e o erro caía em DESCONHECIDO.
     ("video unavailable", MotivoFalha.INDISPONIVEL),
+    ("video is unavailable", MotivoFalha.INDISPONIVEL),
     ("age-restricted", MotivoFalha.RESTRICAO_IDADE),
     ("confirm your age", MotivoFalha.RESTRICAO_IDADE),
     ("only available for registered users", MotivoFalha.RESTRICAO_IDADE),

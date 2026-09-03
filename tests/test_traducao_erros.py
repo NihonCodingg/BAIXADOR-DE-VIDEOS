@@ -241,3 +241,62 @@ def test_classificacao_e_imutavel():
     c = Classificacao(motivo=MotivoFalha.REDE, mensagem_original="x", detalhes={})
     with pytest.raises(Exception):
         c.motivo = MotivoFalha.DRM
+
+
+# ===========================================================================
+# Bloqueio antibot do YouTube e falhas de cookie
+#
+# As mensagens abaixo são as REAIS, capturadas do yt-dlp 2026.08.19 contra o
+# YouTube em 03/09/2026, e do código de cookies.py da mesma versão.
+# ===========================================================================
+
+# Repare no apóstrofo: é U+2019, não o ASCII. Casar por "you're" falharia.
+BOT = ("Sign in to confirm you’re not a bot. Use --cookies-from-browser or "
+       "--cookies for the authentication. See  "
+       "https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp  "
+       "for how to manually pass cookies.")
+
+
+def test_bloqueio_antibot_tem_motivo_proprio():
+    """Era DESCONHECIDO, e despejava o texto em inglês do yt-dlp na tela."""
+    c = classificar(ExtractorError(BOT))
+    assert c.motivo is MotivoFalha.BLOQUEIO_BOT
+    assert "robô" in c.mensagem
+    assert "cookies" in c.mensagem.lower()
+    assert "--cookies-from-browser" not in c.mensagem, "a tela não fala CLI"
+
+
+def test_bloqueio_antibot_nao_vira_erro_de_cookie():
+    """A mensagem do bloqueio CITA --cookies-from-browser: se a tabela
+    olhasse "cookie" antes de "not a bot", o motivo sairia errado."""
+    assert classificar(ExtractorError(BOT)).motivo is MotivoFalha.BLOQUEIO_BOT
+
+
+def test_bloqueio_antibot_nao_e_retentavel():
+    """Repetir sem cookies dá no mesmo; o caminho é ligar os cookies."""
+    assert classificar(ExtractorError(BOT)).retentavel is False
+
+
+@pytest.mark.parametrize("texto", [
+    "This video is unavailable",          # a forma que estava escapando
+    "Video unavailable",
+])
+def test_video_indisponivel_nas_duas_formas(texto):
+    """"This video is unavailable" não casa com a substring "video
+    unavailable" — o "is" no meio quebra. Caía em DESCONHECIDO."""
+    assert classificar(ExtractorError(texto)).motivo is MotivoFalha.INDISPONIVEL
+
+
+@pytest.mark.parametrize("texto", [
+    "Could not copy Chrome cookie database. See  https://github.com/...  for more info",
+    "Failed to decrypt with DPAPI. See  https://github.com/...  for more info",
+    "unknown browser: naoexiste",
+    "unsupported platform: win32",
+])
+def test_falha_de_cookie_tem_motivo_proprio(texto):
+    """Os quatro caminhos de falha de leitura de cookie, todos medidos no
+    yt-dlp instalado. Sem isto o usuário via texto cru em inglês."""
+    c = classificar(ExtractorError(texto))
+    assert c.motivo is MotivoFalha.COOKIES
+    assert "cookies" in c.mensagem.lower()
+    assert "Ajustes" in c.mensagem
