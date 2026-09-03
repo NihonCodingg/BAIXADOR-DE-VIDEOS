@@ -434,6 +434,10 @@ button, input, select, textarea { font: inherit; color: inherit; }
   display: flex;
   gap: 8px;
   align-items: baseline;
+  /* T7: o aviso de download interrompido traz um caminho do Windows inteiro.
+     Sem quebrar linha, o botão espremia o texto a 43px e o caminho vazava
+     310px para fora da caixa no celular. */
+  flex-wrap: wrap;
   padding: 8px 12px;
   border-top: var(--borda);
   font-size: 12px;
@@ -450,7 +454,9 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .nota--aviso .nota__tag { color: var(--cor-aviso); }
 .nota--dup { background: var(--cor-info-fraco); }
 .nota--dup .nota__tag { color: var(--cor-info); }
-.nota__corpo { min-width: 0; }
+/* base 0 para caber ao lado do botão enquanto houver espaço; piso de 14em
+   para, quando não houver, o botão descer em vez de esmagar o texto. */
+.nota__corpo { flex: 1 1 0; min-width: min(14em, 100%); overflow-wrap: anywhere; }
 .nota .btn { margin-left: auto; flex: none; }
 
 .cartao--erro { border-color: var(--cor-erro); background: var(--cor-erro-fraco); }

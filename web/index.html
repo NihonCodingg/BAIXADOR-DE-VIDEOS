@@ -17,6 +17,14 @@
 </div>
 
 <!-- ============================================================
+     A API NÃO RESPONDE (aparece enquanto a comunicação estiver caída)
+     ============================================================ -->
+<div class="banner" id="banner-api" hidden>
+  <span class="banner__tag">sem conexão</span>
+  <span class="banner__msg" id="banner-api-msg"></span>
+</div>
+
+<!-- ============================================================
      BARRA DE TOPO
      ============================================================ -->
 <header class="topbar">
@@ -27,7 +35,7 @@
   <div class="topbar__meta">
     <span class="pill" id="pill-ffmpeg" data-tone="neutral">ffmpeg —</span>
     <span class="pill" id="pill-fila" data-tone="neutral">fila 0</span>
-    <span class="host">127.0.0.1:8000</span>
+    <span class="host" id="host">127.0.0.1:8000</span>
   </div>
 </header>
 

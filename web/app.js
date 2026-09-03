@@ -5,15 +5,14 @@
    Sumário:
      1. Constantes e utilidades
      2. Formatação (a API entrega valores crus)
-     3. Camada de API  (fetch + fallback de demonstração)
+     3. Camada de API  (fetch, sem invenção de dados)
      4. Estado da aplicação
      5. Boot / config
      6. Entrada e inspeção
      7. Preview
      8. Fila (render incremental + polling de 1s)
      9. Histórico
-    10. Toasts
-    11. SERVIDOR DE DEMONSTRAÇÃO (só roda se a API real não responder)
+    10. Toasts, vazios, eventos
    ============================================================ */
 
 'use strict';
@@ -23,6 +22,7 @@
    ------------------------------------------------------------ */
 
 var INTERVALO_POLLING = 1000;         // contrato: 1 s
+var ESPERA_MAXIMA = 15000;            // teto do backoff quando a API cai
 var LIMITE_HISTORICO = 100;
 var CHAVE_ESCOLHAS = 'footage.escolhas';   // último perfil/projeto usados
 var CHAVE_RASCUNHO = 'footage.rascunho';   // texto da caixa de links
@@ -125,18 +125,12 @@ function fmtDataUpload(s) {
 
 /* ------------------------------------------------------------
    3. CAMADA DE API
-   Uma função só. Se a API real não responder (página aberta sem o
-   servidor Python atrás), cai no servidor de demonstração da seção 11
-   para a interface continuar navegável. Ponha DEMO_PERMITIDO = false
-   para exigir a API real.
+   Uma função só. A API é a ÚNICA fonte de dados desta tela: quando ela
+   não responde, a tela diz isso. Nunca preenche o buraco com conteúdo
+   inventado — footage que nunca existiu não pode aparecer aqui.
    ------------------------------------------------------------ */
 
-var DEMO_PERMITIDO = true;
-var usandoDemo = false;
-
 function api(metodo, caminho, corpo) {
-  if (usandoDemo) return Demo.chamar(metodo, caminho, corpo);
-
   var opcoes = { method: metodo, headers: { 'Accept': 'application/json' } };
   if (corpo !== undefined) {
     opcoes.headers['Content-Type'] = 'application/json';
@@ -145,8 +139,8 @@ function api(metodo, caminho, corpo) {
 
   return fetch(caminho, opcoes).then(function (r) {
     var tipo = r.headers.get('content-type') || '';
-    // página aberta sem a API atrás: o servidor de arquivos responde HTML/404
-    if (tipo.indexOf('json') === -1) return semApi(metodo, caminho, corpo);
+    // resposta sem JSON: quem respondeu não é a API desta aplicação
+    if (tipo.indexOf('json') === -1) return Promise.reject(quedaDaApi(r.status));
     return r.json().catch(function () { return {}; }).then(function (dados) {
       if (r.ok) return dados;
       // erro sempre na mesma forma: {erro: "..."} (+ detalhes no 422)
@@ -156,23 +150,46 @@ function api(metodo, caminho, corpo) {
       e.detalhes = dados.detalhes || null;
       throw e;
     });
-  }, function (falhaRede) {
-    return semApi(metodo, caminho, corpo, falhaRede);
+  }, function () {
+    return Promise.reject(quedaDaApi(0));
   });
 }
 
-/* sem API real: cai na demonstração (se permitida) ou avisa */
-function semApi(metodo, caminho, corpo, causa) {
-  if (DEMO_PERMITIDO) {
-    if (!usandoDemo) {
-      usandoDemo = true;
-      console.info('API real não respondeu — usando dados de demonstração.', causa || '');
-    }
-    return Demo.chamar(metodo, caminho, corpo);
-  }
-  var e = new Error('A API em 127.0.0.1:8000 não respondeu.');
+/* Falha de COMUNICAÇÃO (a API não respondeu), status 0 — diferente de um
+   erro DA API, que vem com status e mensagem próprios. */
+function quedaDaApi(status) {
+  var e = new Error('A API em ' + location.host + ' não respondeu' +
+    (status ? ' (HTTP ' + status + ').' : '.'));
   e.status = 0;
-  return Promise.reject(e);
+  return e;
+}
+
+/* Backoff: 1 s, 2, 4, 8, teto de 15 — a API caída não merece uma
+   requisição por segundo. Enquanto ela estiver fora, um banner fixo diz
+   isso: silêncio aqui é o que fazia a tela mentir. */
+function esperaAtual() {
+  var dobras = Math.max(0, estado.falhasApi - 1);
+  return Math.min(INTERVALO_POLLING * Math.pow(2, dobras), ESPERA_MAXIMA);
+}
+
+/* Devolve true se era queda da API (e já a anunciou na tela). */
+function registrarFalhaApi(e) {
+  if (e.status !== 0) return false;
+  estado.falhasApi++;
+  $('#banner-api').hidden = false;
+  $('#banner-api-msg').textContent = e.message +
+    ' Tentando de novo a cada ' + Math.round(esperaAtual() / 1000) + ' s.';
+  if (estado.falhasApi === 1) toast(e.message, 'erro');   // um toast, não um por tentativa
+  ligarPolling();   // sonda até ela voltar, mesmo sem job na fila
+  return true;
+}
+
+function registrarSucessoApi() {
+  if (estado.falhasApi) {
+    estado.falhasApi = 0;
+    toast('Conexão com a API restabelecida.', 'ok');
+  }
+  $('#banner-api').hidden = true;
 }
 
 /* ------------------------------------------------------------
@@ -185,8 +202,10 @@ var estado = {
   jobs: [],
   historico: [],
   urlPorJob: {},      // id do job -> url enviada (para "tentar de novo")
-  pollAtivo: false,
+  pollAtivo: false,        // id do setTimeout do polling (não setInterval)
   pollEmVoo: false,
+  falhasApi: 0,            // quedas seguidas da API: definem a espera
+  tinhaPendente: false,    // havia job vivo na volta anterior do polling
   escolhas: { perfil: null, projeto: null }
 };
 
@@ -208,6 +227,7 @@ function salvarEscolhas() {
 
 function iniciar() {
   lerEscolhas();
+  $('#host').textContent = location.host;   // a porta pode não ser a 8000
 
   // rascunho da caixa de links sobrevive a um reload
   try {
@@ -221,11 +241,21 @@ function iniciar() {
   renderFila();
   renderHistorico();
 
-  api('GET', '/api/config').then(aplicarConfig).then(function () {
+  carregarConfig();
+}
+
+/* Sem /api/config não há perfis nem projetos: a tela não funciona. Se a
+   API ainda não subiu, insiste com o mesmo backoff em vez de ficar morta
+   esperando um F5. */
+function carregarConfig() {
+  api('GET', '/api/config').then(function (cfg) {
+    registrarSucessoApi();
+    aplicarConfig(cfg);
     carregarHistorico();
     atualizarFila();          // a fila é da sessão, mas pode haver job vivo
   }).catch(function (e) {
-    toast(e.message, 'erro');
+    if (registrarFalhaApi(e)) setTimeout(carregarConfig, esperaAtual());
+    else toast(e.message, 'erro');
   });
 }
 
@@ -327,6 +357,7 @@ function inspecionar() {
   $('#lote').hidden = true;
 
   api('POST', '/api/inspecionar', { links: texto }).then(function (r) {
+    registrarSucessoApi();
     estado.preview = (r.itens || []).map(function (item) {
       return {
         item: item,
@@ -340,7 +371,7 @@ function inspecionar() {
   }).catch(function (e) {
     estado.preview = [];
     renderPreview();
-    toast(e.message, 'erro');
+    if (!registrarFalhaApi(e)) toast(e.message, 'erro');
   }).then(function () {
     $('#btn-inspecionar').disabled = linhasDeLinks().length === 0;
   });
@@ -497,6 +528,7 @@ function enfileirar(indices) {
     };
 
     api('POST', '/api/fila', corpo).then(function (r) {
+      registrarSucessoApi();
       // tudo ou nada: se voltou 200, todos entraram
       (r.ids || []).forEach(function (id, k) {
         if (grupo[k]) estado.urlPorJob[id] = grupo[k].item.url;
@@ -511,6 +543,7 @@ function enfileirar(indices) {
       ligarPolling();
       toast(grupo.length + (grupo.length === 1 ? ' job na fila' : ' jobs na fila'), 'ok');
     }).catch(function (e) {
+      if (registrarFalhaApi(e)) return;
       // 409 de "já baixado" ganha caminho de saída: marcar forcar e tentar de novo
       if (e.status === 409 && /forcar=true/i.test(e.message)) {
         grupo.forEach(function (p) { p.forcar = true; });
@@ -534,25 +567,32 @@ function atualizarFila() {
   if (estado.pollEmVoo) return;                 // nunca duas requisições juntas
   estado.pollEmVoo = true;
   return api('GET', '/api/fila').then(function (r) {
+    registrarSucessoApi();
     estado.jobs = r.jobs || [];
     renderFila();
-    ligarPolling();
   }).catch(function (e) {
-    if (e.status !== 0) toast(e.message, 'erro');
-  }).then(function () { estado.pollEmVoo = false; });
+    if (!registrarFalhaApi(e)) toast(e.message, 'erro');
+  }).then(function () {
+    estado.pollEmVoo = false;
+    ligarPolling();
+  });
 }
 
+/* Um setTimeout por vez, e não setInterval: assim o intervalo pode crescer
+   quando a API cai e voltar a 1 s quando ela responde. Com a API fora, o
+   polling continua mesmo sem job vivo — é ele que descobre que ela voltou. */
 function ligarPolling() {
   var pendente = estado.jobs.some(function (j) {
     return j.estado === 'na_fila' || j.estado === 'baixando';
   });
-  if (pendente && !estado.pollAtivo) {
-    estado.pollAtivo = setInterval(atualizarFila, INTERVALO_POLLING);
-  } else if (!pendente && estado.pollAtivo) {
-    clearInterval(estado.pollAtivo);
-    estado.pollAtivo = false;
+  if (estado.pollAtivo) { clearTimeout(estado.pollAtivo); estado.pollAtivo = false; }
+  if (pendente || estado.falhasApi) {
+    estado.pollAtivo = setTimeout(atualizarFila, esperaAtual());
+  }
+  if (estado.tinhaPendente && !pendente && !estado.falhasApi) {
     carregarHistorico();      // o que terminou já está no banco
   }
+  estado.tinhaPendente = pendente;
 }
 
 function renderFila() {
@@ -608,9 +648,11 @@ function atualizarNoJob(no, j, posicao) {
   var pr = j.progresso;
   var pct = pr ? fmtPercentual(pr.percentual) : null;
 
-  // a estrutura só é reconstruída quando o estado muda
-  if (no.dataset.estado !== j.estado) {
+  // a estrutura só é reconstruída quando o estado (ou o "já existia") muda
+  var jaExistia = j.ja_existia ? '1' : '';
+  if (no.dataset.estado !== j.estado || no.dataset.jaExistia !== jaExistia) {
     no.dataset.estado = j.estado;
+    no.dataset.jaExistia = jaExistia;
     no.innerHTML = estruturaJob(j, posicao);
   }
 
@@ -621,7 +663,7 @@ function atualizarNoJob(no, j, posicao) {
     if (pos) pos.textContent = posicao === 1 ? 'próximo da fila' : posicao + 'º da fila';
   }
 
-  if (j.estado === 'baixando' || j.estado === 'concluido') {
+  if (pr) {
     var barra = q('.barra'), fill = q('.barra__fill');
     if (barra) {
       barra.classList.toggle('barra--indet', pct === null);
@@ -658,6 +700,7 @@ function estruturaJob(j, posicao) {
 
   html += '<div class="job__info">';
   html += '<div class="row row--gap">' + selo(j.estado) +
+    (j.ja_existia ? '<span class="tag">já existia</span>' : '') +
     '<span class="tag">' + esc(j.perfil) + '</span>' +
     '<span class="tag">' + esc(rotuloProjeto(j.projeto)) + '</span></div>';
   html += '<h3 class="titulo" title="' + esc(v.titulo) + '">' + esc(v.titulo) + '</h3>';
@@ -675,7 +718,10 @@ function estruturaJob(j, posicao) {
     html += '<div class="row row--gap"><span class="posicao" data-campo="posicao"></span></div>';
   }
 
-  if (j.estado === 'baixando' || j.estado === 'concluido') {
+  // `ja_existia` chega como concluido com progresso null: nada foi baixado,
+  // então não há barra nenhuma a mostrar (uma barra indeterminada aqui daria
+  // a impressão de download em andamento num job que já acabou)
+  if (j.estado === 'baixando' || (j.estado === 'concluido' && j.progresso)) {
     html += '<div class="prog">' +
       '<div class="prog__linha">' +
         '<div class="prog__pct mono" data-campo="pct">--<small>%</small></div>' +
@@ -690,13 +736,13 @@ function estruturaJob(j, posicao) {
   }
 
   if (j.estado === 'falhou') {
-    var podeTentar = MOTIVOS_RETENTAVEIS[j.motivo_falha] && estado.urlPorJob[j.id];
+    var podeTentar = MOTIVOS_RETENTAVEIS[j.motivo_falha] && (j.url || estado.urlPorJob[j.id]);
     html += '<div class="falha">' +
       '<div class="falha__cod">' + esc(j.motivo_falha || 'desconhecido') + '</div>' +
       '<p class="falha__msg">' + esc(j.mensagem_falha || 'Falha sem mensagem.') + '</p>' +
       (MOTIVOS_RETENTAVEIS[j.motivo_falha]
         ? '<div class="falha__acoes"><button class="btn btn--mini" data-acao="tentar" data-id="' + esc(j.id) + '"' +
-          (podeTentar ? '' : ' disabled title="cole o link novamente para tentar"') + '>Tentar de novo</button></div>'
+          (podeTentar ? '' : ' disabled') + '>Tentar de novo</button></div>'
         : '') +
       '</div>';
   }
@@ -708,31 +754,37 @@ function estruturaJob(j, posicao) {
       '</div>';
   }
 
-  html += '<div class="nota nota--aviso" data-campo="aviso" hidden>' +
-    '<span class="nota__tag">Aviso</span><span class="nota__corpo"></span></div>';
+  // "já existia" é sucesso com ressalva — cor de informação, a mesma que o
+  // preview usa para duplicata. O amarelo fica para o que pede atenção.
+  html += '<div class="nota ' + (j.ja_existia ? 'nota--dup' : 'nota--aviso') +
+    '" data-campo="aviso" hidden>' +
+    '<span class="nota__tag">' + (j.ja_existia ? 'Já existia' : 'Aviso') +
+    '</span><span class="nota__corpo"></span></div>';
 
   return html;
 }
 
 function cancelar(id) {
   api('DELETE', '/api/fila/' + encodeURIComponent(id)).then(function () {
+    registrarSucessoApi();
     atualizarFila();
   }).catch(function (e) {
-    toast(e.message, 'erro');
+    if (!registrarFalhaApi(e)) toast(e.message, 'erro');
     atualizarFila();          // 404/409: a fila mudou, recarrega
   });
 }
 
 function tentarDeNovo(id) {
   var job = estado.jobs.filter(function (j) { return j.id === id; })[0];
-  var url = estado.urlPorJob[id];
+  var url = (job && job.url) || estado.urlPorJob[id];
   if (!job || !url) return;
   api('POST', '/api/fila', { urls: [url], perfil: job.perfil, projeto: job.projeto, forcar: true })
     .then(function (r) {
       (r.ids || []).forEach(function (novo) { estado.urlPorJob[novo] = url; });
       atualizarFila();
-      ligarPolling();
-    }).catch(function (e) { toast(e.message, 'erro'); });
+    }).catch(function (e) {
+      if (!registrarFalhaApi(e)) toast(e.message, 'erro');
+    });
 }
 
 /* ------------------------------------------------------------
@@ -748,20 +800,40 @@ function carregarHistorico() {
   q.push('limite=' + LIMITE_HISTORICO);
 
   return api('GET', '/api/historico?' + q.join('&')).then(function (r) {
+    registrarSucessoApi();
     estado.historico = r.registros || [];
     renderHistorico();
   }).catch(function (e) {
-    if (e.status !== 0) toast(e.message, 'erro');
+    if (!registrarFalhaApi(e)) toast(e.message, 'erro');
   });
+}
+
+/* Cada registro é uma TENTATIVA, não um vídeo (contrato §3.6): baixar o
+   mesmo vídeo duas vezes no mesmo perfil dá duas linhas. Agrupa pela mesma
+   chave que o banco usa — extractor + video_id + perfil — e mostra a
+   tentativa mais recente; as anteriores ficam atrás de "+N tentativas", com
+   o caminho de cada uma, que é o que se procura quando se procura um
+   arquivo. */
+function agruparHistorico(regs) {
+  var ordem = [], por = {};
+  regs.forEach(function (r) {
+    var chave = (r.extractor || '') + '|' + (r.video_id || '') + '|' + r.perfil;
+    if (!por[chave]) { por[chave] = []; ordem.push(por[chave]); }
+    por[chave].push(r);
+  });
+  return ordem;   // a API já devolve mais recente primeiro
 }
 
 function renderHistorico() {
   var alvo = $('#lista-historico');
   var regs = estado.historico;
   var filtrando = $('#busca-historico').value.trim() || $('#filtro-projeto').value;
+  var grupos = agruparHistorico(regs);
 
   $('#contador-historico').textContent = regs.length
-    ? regs.length + (regs.length === LIMITE_HISTORICO ? '+ registros' : ' registro(s)')
+    ? grupos.length + (grupos.length === 1 ? ' vídeo' : ' vídeos') + ' · ' +
+      regs.length + (regs.length === LIMITE_HISTORICO ? '+ tentativas' :
+        (regs.length === 1 ? ' tentativa' : ' tentativas'))
     : '';
 
   if (!regs.length) {
@@ -771,33 +843,135 @@ function renderHistorico() {
     return;
   }
 
-  alvo.innerHTML = regs.map(function (r) {
+  alvo.innerHTML = grupos.map(function (g) {
+    var r = g[0], anteriores = g.slice(1);
     return '' +
       '<div class="hist">' +
         '<div class="hist__info">' +
           '<div class="row row--gap">' + selo(r.status) +
+            (r.ja_existia ? '<span class="tag">já existia</span>' : '') +
             '<span class="tag">' + esc(r.perfil) + '</span>' +
             '<span class="tag">' + esc(rotuloProjeto(r.projeto)) + '</span>' +
+            (anteriores.length
+              ? '<button class="btn btn--mini btn--ghost" data-acao="expandir" ' +
+                'data-n="' + anteriores.length + '" aria-expanded="false">' +
+                rotuloTentativas(anteriores.length, false) + '</button>'
+              : '') +
           '</div>' +
           '<h3 class="titulo titulo--1" title="' + esc(r.titulo) + '">' + esc(r.titulo) + '</h3>' +
-          '<div class="meta">' +
-            '<span class="meta__canal">' + esc(r.canal || 'canal desconhecido') + '</span>' +
-            '<span class="meta__sep">/</span><span class="mono">' + fmtDuracao(r.duracao_s) + '</span>' +
-            '<span class="meta__sep">/</span><span class="mono">' + esc(r.resolucao || '--') + '</span>' +
-            '<span class="meta__sep">/</span><span class="mono">' + fmtBytes(r.tamanho_bytes) + '</span>' +
-            '<span class="meta__sep">/</span><span class="mono">' + esc(fmtDataHora(r.concluido_em || r.criado_em)) + '</span>' +
-          '</div>' +
-          (r.status === 'falhou' || r.status === 'interrompido'
-            ? '<p class="falha__msg">' + esc(r.mensagem_falha ||
-                (r.status === 'interrompido' ? 'O programa fechou durante o download.' : 'Falha sem mensagem.')) + '</p>'
-            : '<span class="caminho caminho--1" title="' + esc(r.caminho) + '">' + esc(r.caminho) + '</span>') +
+          metaHistorico(r) +
+          corpoHistorico(r) +
+          notaHistorico(r) +
+          (anteriores.length
+            ? '<div data-campo="anteriores" hidden>' +
+              anteriores.map(tentativaAnterior).join('') + '</div>'
+            : '') +
         '</div>' +
-        '<div class="hist__acoes">' +
-          '<button class="btn btn--mini" data-acao="copiar" data-caminho="' + esc(r.caminho) + '"' +
-            (r.caminho ? '' : ' disabled') + '>Copiar caminho</button>' +
-        '</div>' +
+        '<div class="hist__acoes">' + botaoCopiar(r) + '</div>' +
       '</div>';
   }).join('');
+}
+
+function rotuloTentativas(n, aberto) {
+  return (aberto ? '−' : '+') + n + (n === 1 ? ' tentativa' : ' tentativas');
+}
+
+function metaHistorico(r) {
+  return '<div class="meta">' +
+    '<span class="meta__canal">' + esc(r.canal || 'canal desconhecido') + '</span>' +
+    '<span class="meta__sep">/</span><span class="mono">' + fmtDuracao(r.duracao_s) + '</span>' +
+    '<span class="meta__sep">/</span><span class="mono">' + esc(r.resolucao || '--') + '</span>' +
+    '<span class="meta__sep">/</span><span class="mono">' + fmtBytes(r.tamanho_bytes) + '</span>' +
+    '<span class="meta__sep">/</span><span class="mono">' + esc(fmtDataHora(r.concluido_em || r.criado_em)) + '</span>' +
+    '</div>';
+}
+
+/* O caminho só aparece quando aponta para um arquivo que existe. Em `falhou`
+   a API já devolve caminho null; em `interrompido` SEM aviso, a reconciliação
+   da subida não achou arquivo nenhum no destino — mostrar o caminho ali seria
+   o histórico mentindo sobre onde o arquivo está. */
+function temArquivo(r) {
+  return !!r.caminho && (r.status === 'concluido' ||
+    (r.status === 'interrompido' && !!r.aviso));
+}
+
+function corpoHistorico(r) {
+  if (r.status === 'falhou') {
+    return '<p class="falha__msg">' + esc(r.mensagem_falha || 'Falha sem mensagem.') + '</p>';
+  }
+  if (!temArquivo(r)) {
+    return '<p class="falha__msg">' + esc(r.status === 'interrompido'
+      ? 'O programa fechou durante o download e não há arquivo no destino.'
+      : 'Sem arquivo no disco.') + '</p>';
+  }
+  return '<span class="caminho caminho--1" title="' + esc(r.caminho) + '">' + esc(r.caminho) + '</span>';
+}
+
+/* O `aviso` do histórico não tinha lugar na tela — e é a única forma de o
+   usuário saber que há um arquivo possivelmente truncado no destino
+   (contrato §7). Em `interrompido` a decisão é dele: o botão baixa de novo
+   com forcar, e o arquivo parcial não é tocado. */
+function notaHistorico(r) {
+  var interrompido = r.status === 'interrompido';
+  if (!r.aviso && !interrompido) return '';
+  var url = r.url_canonica || r.url_original || '';
+  return '<div class="nota ' + (r.ja_existia ? 'nota--dup' : 'nota--aviso') + '">' +
+    '<span class="nota__tag">' + (r.ja_existia ? 'Já existia' : 'Aviso') + '</span>' +
+    '<span class="nota__corpo">' +
+      esc(r.aviso || 'O programa fechou durante o download.') + '</span>' +
+    (interrompido && url
+      ? '<button class="btn btn--mini" data-acao="refazer" data-url="' + esc(url) +
+        '" data-perfil="' + esc(r.perfil) + '" data-projeto="' + esc(r.projeto) +
+        '">Baixar de novo</button>'
+      : '') +
+    '</div>';
+}
+
+function botaoCopiar(r) {
+  return '<button class="btn btn--mini" data-acao="copiar" data-caminho="' +
+    esc(r.caminho || '') + '"' + (temArquivo(r) ? '' : ' disabled') +
+    '>Copiar caminho</button>';
+}
+
+/* Tentativa anterior: o mesmo componente da linha do histórico, sem repetir o
+   título — o que muda de uma tentativa para a outra é a data e o caminho. */
+function tentativaAnterior(r) {
+  return '' +
+    '<div class="hist">' +
+      '<div class="hist__info">' +
+        '<div class="row row--gap">' + selo(r.status) +
+          (r.ja_existia ? '<span class="tag">já existia</span>' : '') +
+          '<span class="tag">' + esc(rotuloProjeto(r.projeto)) + '</span>' +
+          '<span class="mono">' + esc(fmtDataHora(r.concluido_em || r.criado_em)) + '</span>' +
+        '</div>' +
+        corpoHistorico(r) +
+        notaHistorico(r) +
+      '</div>' +
+      '<div class="hist__acoes">' + botaoCopiar(r) + '</div>' +
+    '</div>';
+}
+
+function alternarTentativas(botao) {
+  var caixa = botao.closest('.hist').querySelector('[data-campo="anteriores"]');
+  if (!caixa) return;
+  caixa.hidden = !caixa.hidden;
+  botao.setAttribute('aria-expanded', String(!caixa.hidden));
+  botao.textContent = rotuloTentativas(Number(botao.dataset.n), !caixa.hidden);
+}
+
+/* Refaz um download interrompido. `forcar` porque a tentativa anterior já
+   ocupa a chave no histórico; o arquivo parcial continua onde está, e o novo
+   ganha sufixo " (2)" se o nome colidir. */
+function refazer(dados) {
+  api('POST', '/api/fila', {
+    urls: [dados.url], perfil: dados.perfil, projeto: dados.projeto, forcar: true
+  }).then(function (r) {
+    (r.ids || []).forEach(function (id) { estado.urlPorJob[id] = dados.url; });
+    toast('Na fila de novo.', 'ok');
+    atualizarFila();
+  }).catch(function (e) {
+    if (!registrarFalhaApi(e)) toast(e.message, 'erro');
+  });
 }
 
 /* ------------------------------------------------------------
@@ -894,278 +1068,13 @@ function ligarEventos() {
     if (b.dataset.acao === 'cancelar') cancelar(b.dataset.id);
     if (b.dataset.acao === 'tentar') tentarDeNovo(b.dataset.id);
     if (b.dataset.acao === 'copiar') copiarCaminho(b.dataset.caminho);
+    if (b.dataset.acao === 'expandir') alternarTentativas(b);
+    if (b.dataset.acao === 'refazer') refazer(b.dataset);
   });
 
   $('#busca-historico').addEventListener('input', debounce(carregarHistorico, 250));
   $('#filtro-projeto').addEventListener('change', carregarHistorico);
 }
-
-/* ============================================================
-   11. SERVIDOR DE DEMONSTRAÇÃO
-   Só entra em ação quando a API real não responde (abrir o
-   index.html sem o servidor atrás). Reproduz as mesmas respostas
-   do contrato para a interface poder ser navegada e revisada.
-   Apague este bloco quando não precisar mais dele.
-   ============================================================ */
-
-var Demo = (function () {
-
-  var config = {
-    ffmpeg: { disponivel: true, completo: true, ffmpeg: 'C:\\ffmpeg\\bin\\ffmpeg.exe', ffprobe: 'C:\\ffmpeg\\bin\\ffprobe.exe' },
-    perfis: [
-      { nome: 'edicao_1080', descricao: '1080p H.264 + AAC — abre nativo no Premiere/Resolve', disponivel: true, exige_ffmpeg: true, limite_dimensao: 1080, container: 'mp4' },
-      { nome: 'edicao_4k', descricao: 'Até 2160p — VP9/AV1, pode exigir transcode', disponivel: true, exige_ffmpeg: true, limite_dimensao: 2160, container: 'mkv' },
-      { nome: 'so_audio', descricao: 'Só a trilha de áudio, em m4a', disponivel: true, exige_ffmpeg: true, limite_dimensao: null, container: 'm4a' },
-      { nome: 'preview_leve', descricao: 'Até 480p, menor arquivo', disponivel: true, exige_ffmpeg: true, limite_dimensao: 480, container: 'mp4' }
-    ],
-    projetos: [
-      { nome: 'cliente_x', rotulo: 'Cliente X', pasta: 'D:/FOOTAGE/cliente_x', valido: true, motivo: null },
-      { nome: 'pessoal', rotulo: 'Canal pessoal', pasta: 'D:/FOOTAGE/pessoal', valido: true, motivo: null }
-    ]
-  };
-
-  // catálogo fictício de vídeos, incluindo casos difíceis:
-  // título muito longo, thumbnail null, site fora do YouTube
-  var catalogo = [
-    { id: 'LzS8kB6lIm0', extractor: 'Youtube', titulo: 'Grand Final — Major 2026, mapa 5 em Inferno: overtime duplo, clutch de 1v3 e a virada que decidiu o campeonato', canal: 'Canal Michuruca', duracao_s: 4265, thumbnail: 'https://i.ytimg.com/vi/LzS8kB6lIm0/maxresdefault.jpg', data_upload: '20260901', qualidades: [144, 240, 360, 480, 720, 1080, 1440, 2160] },
-    { id: 'aB3dEf7Hi9k', extractor: 'Youtube', titulo: 'Highlights da semifinal — sem comentário, áudio limpo para reuso', canal: 'Liga Sul Esports', duracao_s: 612, thumbnail: null, data_upload: '20260830', qualidades: [360, 480, 720, 1080] },
-    { id: 'zz9PlaqWx0y', extractor: 'Youtube', titulo: 'Entrevista pós-jogo com o capitão (vertical, Shorts)', canal: 'Arena PT', duracao_s: 65, thumbnail: null, data_upload: '20260902', qualidades: [144, 240, 360, 480, 608, 720, 1080] }
-  ];
-
-  var jobs = [];
-  var historico = [];
-  var proxSeq = 1;
-  var tickLigado = false;
-
-  function agora() { return new Date().toISOString().replace('.000Z', '+00:00').replace(/\.\d+Z$/, '+00:00'); }
-  function idAleatorio() { return (Math.random().toString(16).slice(2) + Math.random().toString(16).slice(2)).slice(0, 32); }
-
-  function ehLink(s) { return /^https?:\/\/\S+\.\S+/.test(s); }
-
-  function videoPara(url, i) {
-    var base = catalogo[i % catalogo.length];
-    var v = JSON.parse(JSON.stringify(base));
-    if (!/youtu/.test(url)) {
-      v.extractor = 'Vimeo';
-      v.titulo = 'Clipe hospedado fora do YouTube — captura de tela da partida';
-      v.qualidades = [];
-      v.thumbnail = null;
-      v.canal = 'alguem';
-    }
-    v.url_canonica = url;
-    return v;
-  }
-
-  function baixadosPara(videoId) {
-    var out = {};
-    historico.forEach(function (r) {
-      if (r.video_id === videoId && r.status === 'concluido') {
-        out[r.perfil] = { caminho: r.caminho, projeto: r.projeto, resolucao: r.resolucao, concluido_em: r.concluido_em };
-      }
-    });
-    return out;
-  }
-
-  function inspecionar(texto) {
-    var linhas = String(texto || '').split('\n').map(function (l) { return l.trim(); })
-      .filter(function (l) { return l; })
-      .filter(function (l, i, a) { return a.indexOf(l) === i; });
-
-    return { itens: linhas.map(function (l, i) {
-      if (!ehLink(l)) {
-        return { ok: false, original: l, url: null, erro: "Não é um link válido: '" + l + "'", motivo: 'link_invalido' };
-      }
-      var ehYt = /youtu/.test(l);
-      var v = videoPara(l, i);
-      return {
-        ok: true,
-        original: l,
-        url: ehYt ? 'https://www.youtube.com/watch?v=' + v.id : l,
-        e_youtube: ehYt,
-        aviso: ehYt ? null : 'Link fora do YouTube: o download pode funcionar, mas a deduplicação e o histórico só reconhecem este endereço se ele for colado exatamente igual.',
-        video: v,
-        baixados: baixadosPara(v.id)
-      };
-    }) };
-  }
-
-  function enfileira(corpo) {
-    var urls = corpo.urls || [];
-    var perfil = config.perfis.filter(function (p) { return p.nome === corpo.perfil; })[0];
-    if (!perfil) throw erro(400, "Perfil '" + corpo.perfil + "' não existe.");
-    var projeto = config.projetos.filter(function (p) { return p.nome === corpo.projeto; })[0];
-    if (!projeto) throw erro(400, "Projeto '" + corpo.projeto + "' não existe.");
-
-    var criados = [];
-    urls.forEach(function (u, i) {
-      var v = videoPara(u, i);
-      var dup = baixadosPara(v.id)[corpo.perfil];
-      if (dup && !corpo.forcar) {
-        throw erro(409, "Já baixado no perfil '" + corpo.perfil + "': " + dup.caminho + '. Use forcar=true para baixar de novo.');
-      }
-      var naFila = jobs.some(function (j) {
-        return j.video.id === v.id && j.perfil === corpo.perfil && (j.estado === 'na_fila' || j.estado === 'baixando');
-      });
-      if (naFila) throw erro(409, "Este vídeo já está na fila no perfil '" + corpo.perfil + "'.");
-      criados.push({ v: v, u: u });
-    });
-
-    var ids = criados.map(function (c) {
-      var total = 8 * 1024 * 1024 + Math.floor(Math.random() * 90) * 1024 * 1024;
-      var job = {
-        id: idAleatorio(),
-        estado: 'na_fila',
-        perfil: corpo.perfil,
-        projeto: corpo.projeto,
-        criado_em: agora(),
-        video: { id: c.v.id, titulo: c.v.titulo, canal: c.v.canal, duracao_s: c.v.duracao_s, thumbnail: c.v.thumbnail },
-        progresso: null,
-        caminho_final: null,
-        motivo_falha: null,
-        mensagem_falha: null,
-        aviso: null,
-        _total: total,
-        _falhar: /vimeo|dailymotion/.test(c.u) && Math.random() < .5,   // exercita o estado falhou
-        _indet: Math.random() < .25                                     // total desconhecido
-      };
-      jobs.push(job);
-      return job.id;
-    });
-
-    ligarTick();
-    return { ids: ids };
-  }
-
-  function cancela(id) {
-    var j = jobs.filter(function (x) { return x.id === id; })[0];
-    if (!j) throw erro(404, "Job '" + id + "' não existe.");
-    if (j.estado !== 'na_fila') throw erro(409, 'Só é possível cancelar um job que ainda não começou (SPEC 10.5).');
-    j.estado = 'cancelado';
-    return { cancelado: true };
-  }
-
-  /* um download por vez, avançando em passos */
-  function ligarTick() {
-    if (tickLigado) return;
-    tickLigado = true;
-    setInterval(function () {
-      var ativo = jobs.filter(function (j) { return j.estado === 'baixando'; })[0];
-      if (!ativo) {
-        ativo = jobs.filter(function (j) { return j.estado === 'na_fila'; })[0];
-        if (!ativo) return;
-        ativo.estado = 'baixando';
-        ativo.progresso = { baixados: 0, total: ativo._indet ? null : ativo._total, percentual: ativo._indet ? null : 0, velocidade_bps: 0, eta_s: null };
-      }
-      var passo = (2 + Math.random() * 5) * 1024 * 1024;   // ~2-7 MB/s
-      var p = ativo.progresso;
-      p.baixados = Math.min(ativo._total, p.baixados + passo);
-      p.velocidade_bps = passo;
-      if (!ativo._indet) {
-        p.total = ativo._total;
-        p.percentual = p.baixados / ativo._total * 100;
-        p.eta_s = Math.max(0, Math.round((ativo._total - p.baixados) / passo));
-      }
-      if (p.baixados >= ativo._total) {
-        if (ativo._falhar) {
-          ativo.estado = 'falhou';
-          ativo.motivo_falha = 'rede';
-          ativo.mensagem_falha = 'A conexão caiu durante o download (timeout depois de 3 tentativas).';
-          ativo.progresso = null;
-          registrar(ativo, 'falhou');
-        } else {
-          var ext = config.perfis.filter(function (x) { return x.nome === ativo.perfil; })[0].container;
-          var pasta = config.projetos.filter(function (x) { return x.nome === ativo.projeto; })[0].pasta.replace(/\//g, '\\');
-          ativo.estado = 'concluido';
-          ativo.caminho_final = pasta + '\\20260901 - ' + ativo.video.titulo.slice(0, 58).replace(/[\\/:*?"<>|]/g, '') + ' [' + ativo.video.id + '].' + ext;
-          ativo.progresso = { baixados: ativo._total, total: ativo._total, percentual: 100, velocidade_bps: null, eta_s: 0 };
-          registrar(ativo, 'concluido');
-        }
-      }
-    }, 1000);
-  }
-
-  function registrar(job, status) {
-    historico.unshift({
-      id: proxSeq++,
-      extractor: 'Youtube',
-      video_id: job.video.id,
-      perfil: job.perfil,
-      url_original: '',
-      url_canonica: '',
-      titulo: job.video.titulo,
-      canal: job.video.canal,
-      duracao_s: job.video.duracao_s,
-      projeto: job.projeto,
-      caminho: job.caminho_final,
-      tamanho_bytes: status === 'concluido' ? job._total : null,
-      resolucao: status === 'concluido' ? '1920x1080' : null,
-      status: status,
-      motivo_falha: job.motivo_falha,
-      mensagem_falha: job.mensagem_falha,
-      criado_em: job.criado_em,
-      concluido_em: agora()
-    });
-  }
-
-  function semAcento(s) { return String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase(); }
-
-  function consultaHistorico(qs) {
-    var p = new URLSearchParams(qs || '');
-    var termo = semAcento(p.get('termo'));
-    var projeto = p.get('projeto');
-    var limite = Math.min(Number(p.get('limite') || 100), 1000);
-    return { registros: historico.filter(function (r) {
-      if (termo && semAcento(r.titulo).indexOf(termo) === -1) return false;
-      if (projeto && r.projeto !== projeto) return false;
-      return true;
-    }).slice(0, limite) };
-  }
-
-  function erro(status, msg) { var e = new Error(msg); e.status = status; return e; }
-
-  // dois registros de partida, para o histórico não abrir vazio na demonstração
-  historico.push({
-    id: 0, extractor: 'Youtube', video_id: 'aB3dEf7Hi9k', perfil: 'preview_leve',
-    titulo: 'Scrim antiga — mapa 2, ângulo do observador (arquivo de referência)',
-    canal: 'Liga Sul Esports', duracao_s: 3110, projeto: 'cliente_x',
-    caminho: 'D:\\FOOTAGE\\cliente_x\\20260812 - Scrim antiga mapa 2 angulo do observador [aB3dEf7Hi9k].mp4',
-    tamanho_bytes: 214958080, resolucao: '854x480', status: 'concluido',
-    motivo_falha: null, mensagem_falha: null,
-    criado_em: '2026-08-12T14:02:11+00:00', concluido_em: '2026-08-12T14:06:40+00:00'
-  });
-  historico.push({
-    id: -1, extractor: 'Youtube', video_id: 'zz9PlaqWx0y', perfil: 'edicao_4k',
-    titulo: 'Abertura do campeonato em 4K — pirotecnia e entrada dos times',
-    canal: 'Arena PT', duracao_s: 289, projeto: 'pessoal',
-    caminho: null, tamanho_bytes: null, resolucao: null, status: 'interrompido',
-    motivo_falha: null, mensagem_falha: null,
-    criado_em: '2026-08-10T09:31:00+00:00', concluido_em: null
-  });
-
-  function chamar(metodo, caminho, corpo) {
-    return new Promise(function (resolve, reject) {
-      setTimeout(function () {
-        try {
-          var partes = caminho.split('?');
-          var rota = partes[0];
-          if (metodo === 'GET' && rota === '/api/config') return resolve(config);
-          if (metodo === 'POST' && rota === '/api/inspecionar') return resolve(inspecionar(corpo.links));
-          if (metodo === 'POST' && rota === '/api/fila') return resolve(enfileira(corpo));
-          if (metodo === 'GET' && rota === '/api/fila') return resolve({ jobs: JSON.parse(JSON.stringify(jobs)) });
-          if (metodo === 'DELETE' && rota.indexOf('/api/fila/') === 0) {
-            return resolve(cancela(decodeURIComponent(rota.slice('/api/fila/'.length))));
-          }
-          if (metodo === 'GET' && rota === '/api/historico') return resolve(consultaHistorico(partes[1]));
-          reject(erro(404, 'Rota não encontrada: ' + caminho));
-        } catch (e) { reject(e); }
-      }, rota_demora(caminho));
-    });
-  }
-
-  function rota_demora(caminho) { return caminho.indexOf('/api/inspecionar') === 0 ? 700 : 60; }
-
-  return { chamar: chamar };
-})();
 
 /* ------------------------------------------------------------ */
 document.addEventListener('DOMContentLoaded', iniciar);
