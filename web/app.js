@@ -26,6 +26,7 @@ var ESPERA_MAXIMA = 15000;            // teto do backoff quando a API cai
 var LIMITE_HISTORICO = 100;
 var CHAVE_ESCOLHAS = 'footage.escolhas';   // último perfil/projeto usados
 var CHAVE_RASCUNHO = 'footage.rascunho';   // texto da caixa de links
+var AVULSO = '__avulso';                   // opção de pasta digitada na hora
 
 function $(sel) { return document.querySelector(sel); }
 
@@ -251,6 +252,7 @@ function carregarConfig() {
   api('GET', '/api/config').then(function (cfg) {
     registrarSucessoApi();
     aplicarConfig(cfg);
+    renderProjetos();
     carregarHistorico();
     atualizarFila();          // a fila é da sessão, mas pode haver job vivo
   }).catch(function (e) {
@@ -305,7 +307,8 @@ function preencherProjetos(sel, escolhido) {
     var motivo = p.valido ? '' : ' — ' + (p.motivo || 'indisponível');
     return '<option value="' + esc(p.nome) + '"' + (p.valido ? '' : ' disabled') + ' title="' + esc(p.pasta) + '">' +
       esc(p.rotulo) + esc(motivo) + '</option>';
-  }).join('');
+  }).join('') +
+    '<option value="' + AVULSO + '">Pasta avulsa…</option>';
   var alvo = escolhido || primeiroValido(projetos, 'valido');
   if (alvo) sel.value = alvo;
 }
@@ -325,7 +328,13 @@ function projetoPorNome(nome) {
   for (var i = 0; i < l.length; i++) if (l[i].nome === nome) return l[i];
   return null;
 }
-function rotuloProjeto(nome) { var p = projetoPorNome(nome); return p ? p.rotulo : nome; }
+function rotuloProjeto(nome) {
+  // 'avulso' é o nome que o back-end grava no histórico para um download que
+  // foi para uma pasta digitada na hora; quem diz para onde é o caminho.
+  if (nome === AVULSO || nome === 'avulso') return 'Pasta avulsa';
+  var p = projetoPorNome(nome);
+  return p ? p.rotulo : nome;
+}
 
 /* ------------------------------------------------------------
    6. ENTRADA E INSPEÇÃO
@@ -493,6 +502,14 @@ function cartaoVideo(p, i) {
 
 /* os <select> de cada cartão são preenchidos após o innerHTML,
    para reaproveitar as mesmas funções de preenchimento */
+/* O campo da pasta avulsa só aparece quando ela foi escolhida em algum
+   lugar — na barra de lote ou no seletor de um cartão. */
+function atualizarCampoAvulso() {
+  var usado = $('#lote-projeto').value === AVULSO ||
+    estado.preview.some(function (p) { return p.projeto === AVULSO; });
+  $('#campo-avulso').hidden = !usado;
+}
+
 function preencherSelectsPreview() {
   var selects = $('#lista-preview').querySelectorAll('select[data-acao]');
   for (var k = 0; k < selects.length; k++) {
@@ -502,6 +519,7 @@ function preencherSelectsPreview() {
     else preencherProjetos(s, p.projeto);
     p[s.dataset.acao] = s.value;
   }
+  atualizarCampoAvulso();
 }
 
 function enfileirar(indices) {
@@ -523,9 +541,18 @@ function enfileirar(indices) {
     var corpo = {
       urls: grupo.map(function (p) { return p.item.url; }),
       perfil: partes[0],
-      projeto: partes[1],
       forcar: partes[2] === '1'
     };
+    // Projeto cadastrado OU pasta avulsa: a API recusa os dois juntos.
+    if (partes[1] === AVULSO) {
+      corpo.pasta = $('#pasta-avulsa').value.trim();
+      if (!corpo.pasta) {
+        toast('Informe a pasta avulsa, ou escolha um projeto.', 'erro');
+        return;
+      }
+    } else {
+      corpo.projeto = partes[1];
+    }
 
     api('POST', '/api/fila', corpo).then(function (r) {
       registrarSucessoApi();
@@ -985,6 +1012,141 @@ function refazer(dados) {
 }
 
 /* ------------------------------------------------------------
+   9b. PROJETOS
+   O destino sai do config/projetos.yaml, e agora dá para editá-lo
+   pela tela. O back-end grava preservando os comentários do arquivo.
+   ------------------------------------------------------------ */
+
+function alternarProjetos(mostrar) {
+  var painel = $('#projetos');
+  painel.hidden = mostrar === undefined ? !painel.hidden : !mostrar;
+  if (!painel.hidden) { renderProjetos(); $('#novo-nome').focus(); }
+}
+
+function renderProjetos() {
+  var projetos = (estado.config && estado.config.projetos) || [];
+  $('#lista-projetos').innerHTML = projetos.map(function (p) {
+    return '' +
+      '<div class="hist">' +
+        '<div class="hist__info">' +
+          '<div class="row row--gap">' +
+            '<span class="tag">' + esc(p.nome) + '</span>' +
+            '<strong>' + esc(p.rotulo) + '</strong>' +
+            (p.valido ? '' : '<span class="tag">inválido: ' +
+              esc(p.motivo || 'indisponível') + '</span>') +
+          '</div>' +
+          '<span class="caminho">' + esc(p.pasta) + '</span>' +
+        '</div>' +
+        '<div class="hist__acoes">' +
+          '<button class="btn btn--mini btn--perigo" data-acao="remover-projeto" ' +
+            'data-nome="' + esc(p.nome) + '">Remover</button>' +
+        '</div>' +
+      '</div>';
+  }).join('') || vazio('Nenhum projeto',
+    'Cadastre abaixo a pasta onde o footage deve cair.');
+}
+
+function erroProjeto(mensagem) {
+  var caixa = $('#erro-projeto');
+  caixa.hidden = !mensagem;
+  if (mensagem) caixa.querySelector('.nota__corpo').textContent = mensagem;
+}
+
+function adicionarProjeto() {
+  var corpo = {
+    nome: $('#novo-nome').value.trim(),
+    caminho: $('#novo-caminho').value.trim(),
+    rotulo: $('#novo-rotulo').value.trim() || null
+  };
+  if (!corpo.nome || !corpo.caminho) {
+    erroProjeto('Preencha o nome e a pasta de destino.');
+    return;
+  }
+  erroProjeto('');
+  $('#btn-adicionar-projeto').disabled = true;
+
+  api('POST', '/api/projetos', corpo).then(function (r) {
+    registrarSucessoApi();
+    return recarregarConfig().then(function () {
+      $('#novo-nome').value = '';
+      $('#novo-rotulo').value = '';
+      $('#novo-caminho').value = '';
+      renderProjetos();
+      toast('Projeto ' + r.projeto.nome + ' cadastrado.', 'ok');
+    });
+  }).catch(function (e) {
+    // Erro de cadastro fica NO formulário, não num toast que some em 6 s:
+    // é ali que o usuário vai corrigir o campo.
+    if (!registrarFalhaApi(e)) erroProjeto(e.message);
+  }).then(function () {
+    $('#btn-adicionar-projeto').disabled = false;
+  });
+}
+
+function removerProjeto(nome) {
+  if (!window.confirm('Remover o projeto "' + nome + '"?\n\n' +
+      'Os arquivos já baixados continuam no disco e no histórico. ' +
+      'O que sai é o destino da lista.')) return;
+
+  api('DELETE', '/api/projetos/' + encodeURIComponent(nome)).then(function () {
+    registrarSucessoApi();
+    return recarregarConfig().then(function () {
+      renderProjetos();
+      toast('Projeto ' + nome + ' removido.', 'ok');
+    });
+  }).catch(function (e) {
+    if (!registrarFalhaApi(e)) erroProjeto(e.message);
+  });
+}
+
+/* Depois de cadastrar ou remover, os seletores de perfil/projeto da tela
+   inteira precisam refletir a lista nova. */
+function recarregarConfig() {
+  return api('GET', '/api/config').then(function (cfg) {
+    aplicarConfig(cfg);
+    renderPreview();
+    preencherSelectsPreview();
+  });
+}
+
+/* O navegador não entrega caminho do disco (a File System Access API só dá
+   um handle, sem caminho). Quem abre o seletor nativo é o back-end, que roda
+   nesta mesma máquina — daí o endpoint. */
+function procurarPasta(idCampo) {
+  var botoes = document.querySelectorAll('[data-acao="procurar"]');
+  botoes.forEach(function (b) { b.disabled = true; });
+  api('POST', '/api/escolher-pasta').then(function (r) {
+    registrarSucessoApi();
+    if (r.caminho) {
+      $('#' + idCampo).value = r.caminho;
+      erroProjeto('');
+    } else {
+      toast('Nenhuma pasta escolhida.', null);
+    }
+  }).catch(function (e) {
+    if (!registrarFalhaApi(e)) toast(e.message, 'erro');
+  }).then(function () {
+    botoes.forEach(function (b) { b.disabled = false; });
+  });
+}
+
+function colarNoCampo(idCampo) {
+  var campo = $('#' + idCampo);
+  if (navigator.clipboard && navigator.clipboard.readText) {
+    navigator.clipboard.readText().then(function (texto) {
+      campo.value = (texto || '').trim();
+      campo.focus();
+    }, function () {
+      campo.focus();
+      toast('O navegador não deixou ler a área de transferência. Use Ctrl+V.', 'erro');
+    });
+  } else {
+    campo.focus();
+    toast('Use Ctrl+V para colar aqui.', null);
+  }
+}
+
+/* ------------------------------------------------------------
    10. TOASTS, VAZIOS, EVENTOS
    ------------------------------------------------------------ */
 
@@ -1054,7 +1216,12 @@ function ligarEventos() {
     estado.preview.forEach(function (p) { if (!p.enfileirado) p.projeto = $('#lote-projeto').value; });
     estado.escolhas.projeto = $('#lote-projeto').value; salvarEscolhas();
     renderPreview(); preencherSelectsPreview();
+    atualizarCampoAvulso();
   });
+
+  $('#btn-gerenciar-projetos').addEventListener('click', function () { alternarProjetos(); });
+  $('#btn-fechar-projetos').addEventListener('click', function () { alternarProjetos(false); });
+  $('#btn-adicionar-projeto').addEventListener('click', adicionarProjeto);
   $('#btn-enfileirar-todos').addEventListener('click', function () {
     enfileirar(estado.preview.map(function (_, i) { return i; }));
   });
@@ -1089,6 +1256,9 @@ function ligarEventos() {
     if (b.dataset.acao === 'copiar') copiarCaminho(b.dataset.caminho);
     if (b.dataset.acao === 'abrir') abrirPasta(b.dataset.caminho);
     if (b.dataset.acao === 'expandir') alternarTentativas(b);
+    if (b.dataset.acao === 'colar') colarNoCampo(b.dataset.alvo);
+    if (b.dataset.acao === 'procurar') procurarPasta(b.dataset.alvo);
+    if (b.dataset.acao === 'remover-projeto') removerProjeto(b.dataset.nome);
     if (b.dataset.acao === 'refazer') refazer(b.dataset);
   });
 

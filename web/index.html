@@ -50,7 +50,10 @@
     <section class="panel" id="entrada" aria-labelledby="h-entrada">
       <div class="panel__head">
         <h2 class="panel__title" id="h-entrada">Entrada</h2>
-        <span class="panel__note" id="contador-links">nenhum link</span>
+        <div class="row row--gap">
+          <span class="panel__note" id="contador-links">nenhum link</span>
+          <button class="btn btn--mini btn--ghost" id="btn-gerenciar-projetos">Projetos</button>
+        </div>
       </div>
       <div class="panel__body">
         <textarea id="campo-links" class="links" spellcheck="false"
@@ -60,6 +63,52 @@
           <button class="btn btn--ghost" id="btn-limpar-links">Limpar</button>
         </div>
         <p class="hint">Um link por linha. Linhas vazias e repetidas são ignoradas. Inspecionar não baixa nada.</p>
+      </div>
+    </section>
+
+    <!-- 1b. PROJETOS (abre pelo botao "Projetos" da Entrada) -->
+    <section class="panel" id="projetos" aria-labelledby="h-projetos" hidden>
+      <div class="panel__head">
+        <h2 class="panel__title" id="h-projetos">Projetos</h2>
+        <button class="btn btn--mini btn--ghost" id="btn-fechar-projetos">Fechar</button>
+      </div>
+      <div class="panel__body">
+
+        <div id="lista-projetos"></div>
+
+        <div class="lote">
+          <label class="field field--inline">
+            <span class="field__label">Nome</span>
+            <input class="input" id="novo-nome" spellcheck="false"
+              placeholder="cliente_x" autocomplete="off">
+          </label>
+          <label class="field field--inline">
+            <span class="field__label">Rótulo</span>
+            <input class="input" id="novo-rotulo"
+              placeholder="Cliente X" autocomplete="off">
+          </label>
+        </div>
+
+        <label class="field">
+          <span class="field__label">Pasta de destino</span>
+          <div class="row row--gap">
+            <input class="input" id="novo-caminho" spellcheck="false"
+              placeholder="D:\FOOTAGE\cliente_x" autocomplete="off">
+            <button class="btn btn--mini" data-acao="colar" data-alvo="novo-caminho">Colar</button>
+            <button class="btn btn--mini" data-acao="procurar" data-alvo="novo-caminho">Procurar…</button>
+          </div>
+        </label>
+        <p class="hint">No Explorer, clique na barra de endereço (ou Ctrl+L) e
+          copie o caminho. A pasta precisa existir e aceitar escrita.</p>
+
+        <div class="nota nota--aviso" id="erro-projeto" hidden>
+          <span class="nota__tag">Erro</span>
+          <span class="nota__corpo"></span>
+        </div>
+
+        <div class="row row--gap">
+          <button class="btn btn--primary" id="btn-adicionar-projeto">Adicionar projeto</button>
+        </div>
       </div>
     </section>
 
@@ -81,6 +130,18 @@
           <select class="select" id="lote-projeto"></select>
         </label>
         <button class="btn btn--primary" id="btn-enfileirar-todos">Enfileirar todos</button>
+      </div>
+
+      <!-- Segunda barra, e nao um campo na primeira: dividido com os dois
+           seletores, o caminho ficava com 20 caracteres visiveis. -->
+      <div class="lote" id="campo-avulso" hidden>
+        <label class="field field--inline">
+          <span class="field__label">Pasta avulsa (só deste download)</span>
+          <input class="input" id="pasta-avulsa" spellcheck="false"
+            placeholder="D:\FOOTAGE\algo" autocomplete="off">
+        </label>
+        <button class="btn btn--mini" data-acao="colar" data-alvo="pasta-avulsa">Colar</button>
+        <button class="btn btn--mini" data-acao="procurar" data-alvo="pasta-avulsa">Procurar…</button>
       </div>
 
       <div class="panel__body" id="lista-preview"></div>
